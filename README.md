@@ -7,12 +7,6 @@
 
 ---
 
-## Instalación rápida (Linux / Mac)
-
-```bash
-chmod +x start.sh
-./start.sh
-```
 
 ---
 
