@@ -1,0 +1,310 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --negro: #0d0d0d;
+  --acero: #1a1a1a;
+  --acero2: #242424;
+  --plata: #c0c0c0;
+  --naranja: #e85d04;
+  --naranja-dark: #c44b00;
+  --blanco: #f5f5f0;
+  --gris: #888;
+  --gris-claro: #f4f4f4;
+  --azul: #1a56db;
+  --verde: #057a55;
+  --rojo: #c81e1e;
+  --amarillo: #c27803;
+  --sidebar-w: 220px;
+}
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  font-family: 'Barlow', sans-serif;
+  background: var(--gris-claro);
+  color: #1a1a1a;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+
+/* ── Inputs globales ── */
+input, textarea, select {
+  font-family: 'Barlow', sans-serif;
+  font-size: 1rem; /* mínimo 16px: evita que iOS Safari haga zoom automático al enfocar */
+  outline: none;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+  appearance: none;
+  max-width: 100%;
+}
+button {
+  font-family: 'Barlow', sans-serif;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation; /* evita el doble-tap-zoom en iOS/Android */
+}
+a, button, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+img { max-width: 100%; }
+
+/* ── Badges de estatus ── */
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.badge-terminado { background: #d1fae5; color: #065f46; }
+.badge-proceso   { background: #dbeafe; color: #1e40af; }
+.badge-atendido  { background: #ede9fe; color: #5b21b6; }
+.badge-detenido  { background: #fee2e2; color: #991b1b; }
+.badge-pagada    { background: #d1fae5; color: #065f46; }
+.badge-pendiente { background: #fef3c7; color: #92400e; }
+.badge-admin     { background: #fee2e2; color: #991b1b; }
+.badge-coordinador { background: #dbeafe; color: #1e40af; }
+.badge-cliente   { background: #d1fae5; color: #065f46; }
+.badge-activo    { background: #d1fae5; color: #065f46; }
+.badge-inactivo  { background: #f3f4f6; color: #6b7280; }
+
+/* ── Botones ── */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 8px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; transition: all 0.2s; }
+.btn-primary { background: var(--azul); color: white; }
+.btn-primary:hover { background: #1740a8; }
+.btn-danger  { background: #dc2626; color: white; }
+.btn-danger:hover  { background: #b91c1c; }
+.btn-secondary { background: #e5e7eb; color: #374151; }
+.btn-secondary:hover { background: #d1d5db; }
+.btn-orange { background: var(--naranja); color: white; }
+.btn-orange:hover { background: var(--naranja-dark); }
+.btn-ghost { background: transparent; border: 1px solid #d1d5db; color: #374151; }
+.btn-ghost:hover { background: #f9fafb; }
+.btn-sm { padding: 5px 12px; font-size: 0.8rem; }
+
+/* ── Formularios ── */
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-label { font-size: 0.8rem; font-weight: 500; color: #374151; letter-spacing: 0.5px; }
+.form-input {
+  padding: 10px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: white;
+  color: #111;
+}
+.form-input:focus { border-color: var(--azul); box-shadow: 0 0 0 3px rgba(26,86,219,0.1); }
+.form-select {
+  padding: 10px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: white;
+  color: #111;
+  cursor: pointer;
+}
+.form-select:focus { border-color: var(--azul); }
+
+/* ── Cards ── */
+.card { background: white; border-radius: 12px; border: 1px solid #e5e7eb; padding: 1.25rem; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.card-title { font-size: 1.1rem; font-weight: 600; color: #111; }
+
+/* ── Tabla ── */
+.table-wrap { overflow-x: auto; }
+
+/* ── Columnas fijas (Ticket, Empresa, Fecha, Estatus) — no se mueven al hacer scroll ── */
+.col-sticky-1, .col-sticky-2, .col-sticky-3, .col-sticky-4 {
+  position: sticky; z-index: 2; box-sizing: border-box;
+}
+.col-sticky-1 { left: 0; width: 100px; min-width: 100px; max-width: 100px; }
+.col-sticky-2 { left: 100px; width: 180px; min-width: 180px; max-width: 180px; }
+td.col-sticky-2 { overflow: hidden; text-overflow: ellipsis; }
+th.col-sticky-2 { overflow: visible; }
+.col-sticky-3 { left: 280px; width: 110px; min-width: 110px; max-width: 110px; }
+.col-sticky-4 { left: 390px; width: 130px; min-width: 130px; max-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.25); }
+thead .col-sticky-1, thead .col-sticky-2, thead .col-sticky-3, thead .col-sticky-4 { background: #111; z-index: 3; }
+tbody .col-sticky-1, tbody .col-sticky-2, tbody .col-sticky-3, tbody .col-sticky-4 { background: white; }
+tbody tr:hover .col-sticky-1, tbody tr:hover .col-sticky-2, tbody tr:hover .col-sticky-3, tbody tr:hover .col-sticky-4 { background: #f9fafb; }
+
+/* ── Filtro tipo Excel en encabezado de columna ── */
+.th-filtro { display: flex; align-items: center; gap: 6px; }
+.th-filtro-btn { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.8rem; padding: 2px 4px; line-height: 1; opacity: 0.85; }
+.th-filtro-btn:hover { opacity: 1; }
+.th-filtro-panel {
+  position: absolute; top: 100%; left: 0; margin-top: 4px; background: white; color: #111;
+  border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+  padding: 8px; width: 220px; max-height: 260px; overflow-y: auto; z-index: 20;
+  text-transform: none; letter-spacing: normal; font-weight: 400; font-size: 0.82rem;
+}
+.th-filtro-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.th-filtro-item:hover { background: #f3f4f6; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.875rem; }
+thead tr { background: #111; color: white; }
+thead th { padding: 10px 14px; text-align: left; font-weight: 500; font-size: 0.78rem; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; }
+tbody tr { border-bottom: 1px solid #f0f0f0; transition: background 0.15s; }
+tbody tr:hover { background: #f9fafb; }
+tbody td { padding: 10px 14px; color: #374151; white-space: nowrap; }
+.td-link { color: var(--azul); font-weight: 600; cursor: pointer; }
+.td-link:hover { text-decoration: underline; }
+.td-naranja { color: var(--naranja); font-weight: 600; }
+
+/* ── Modal overlay ── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.modal {
+  background: white;
+  border-radius: 16px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.modal-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 4px; }
+.modal-subtitle { font-size: 0.8rem; color: var(--gris); margin-bottom: 1.25rem; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 1.5rem; }
+
+/* ── Stats cards ── */
+.stat-card { border-radius: 12px; padding: 1rem 1.25rem; }
+.stat-num { font-size: 1.8rem; font-weight: 700; display: block; }
+.stat-label { font-size: 0.78rem; font-weight: 500; }
+
+/* ── Layout dashboard ── */
+.dashboard-layout { display: flex; min-height: 100vh; }
+.sidebar {
+  width: var(--sidebar-w);
+  background: #111827;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 200;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+.sidebar-logo { padding: 1.25rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.sidebar-user { padding: 1rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.sidebar-user .username { font-size: 0.95rem; font-weight: 600; color: white; }
+.sidebar-user .userrole { font-size: 0.7rem; color: #9ca3af; }
+.sidebar-nav { flex: 1; padding: 0.75rem 0; }
+.sidebar-nav a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 1rem;
+  color: #9ca3af;
+  text-decoration: none;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+}
+.sidebar-nav a:hover { color: white; background: rgba(255,255,255,0.05); }
+.sidebar-nav a.active { color: white; background: rgba(232,93,4,0.15); border-left-color: var(--naranja); }
+.sidebar-bottom { padding: 1rem; border-top: 1px solid rgba(255,255,255,0.08); }
+.sidebar-bottom button { width: 100%; background: rgba(255,255,255,0.05); border: none; color: #9ca3af; padding: 9px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+.sidebar-bottom button:hover { background: rgba(255,255,255,0.1); color: white; }
+
+.main-content { margin-left: var(--sidebar-w); flex: 1; padding: 2rem; min-width: 0; }
+/* Igual que .main-content pero sin padding propio — para páginas que ya definen su padding inline */
+.main-content-fluid { margin-left: var(--sidebar-w); min-width: 0; }
+.dashboard-layout { min-width: 0; }
+.dashboard-layout > main { min-width: 0; }
+.page-header { margin-bottom: 1.5rem; }
+.page-title { font-size: 1.5rem; font-weight: 700; color: #111; }
+.page-subtitle { font-size: 0.875rem; color: var(--gris); margin-top: 2px; }
+
+.grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+
+/* ── Loader ── */
+.loader { display: flex; align-items: center; justify-content: center; padding: 3rem; }
+.spinner { width: 36px; height: 36px; border: 3px solid #e5e7eb; border-top-color: var(--naranja); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Leaflet fix ── */
+.leaflet-container { z-index: 1; }
+
+/* ── Estrellas ── */
+.stars { color: #f59e0b; }
+
+/* ── Botón hamburguesa (solo celular/tablet) ── */
+.sidebar-toggle {
+  display: none;
+  position: fixed;
+  top: 0.85rem; left: 1rem;
+  z-index: 300;
+  width: 42px; height: 42px;
+  background: #111827;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 1.25rem;
+  align-items: center; justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  cursor: pointer;
+}
+.sidebar-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 199;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .sidebar-toggle { display: flex; }
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    width: min(80vw, 280px);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-overlay { display: block; }
+
+  .main-content,
+  .main-content-fluid {
+    margin-left: 0 !important;
+    padding: 1rem;
+    padding-top: 4.25rem; /* deja espacio para el botón hamburguesa */
+  }
+  main.main-content-fluid { padding-top: 4.25rem !important; }
+
+  .grid-2 { grid-template-columns: 1fr; }
+  .grid-stats { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.6rem; }
+  .stat-card { padding: 0.8rem 1rem; }
+  .stat-num { font-size: 1.4rem; }
+  .stat-label { font-size: 0.7rem; }
+
+  .card { padding: 1rem; border-radius: 10px; }
+  .page-title { font-size: 1.2rem; }
+
+  .modal { padding: 1rem; border-radius: 12px; }
+
+  table { font-size: 0.8rem; }
+  thead th { padding: 8px 10px; font-size: 0.7rem; }
+  tbody td { padding: 8px 10px; }
+
+  /* Layout de 3 columnas del Login se apila en celular */
+  .login-grid { grid-template-columns: 1fr !important; padding: 1.25rem 1rem !important; gap: 1rem !important; }
+  .login-features { display: none !important; } /* tarjetas decorativas: se ocultan para priorizar el formulario */
+  .login-card { width: 100% !important; max-width: 420px; margin: 0 auto; }
+}
+
+@media (max-width: 400px) {
+  .grid-stats { grid-template-columns: 1fr 1fr; }
+  .col-sticky-2 { width: 130px !important; min-width: 130px !important; max-width: 130px !important; }
+  .col-sticky-3 { left: 230px !important; }
+  .col-sticky-4 { left: 340px !important; }
+}
