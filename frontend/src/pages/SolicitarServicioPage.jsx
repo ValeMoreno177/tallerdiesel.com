@@ -70,7 +70,7 @@ export default function SolicitarServicioPage() {
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '2rem' }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: '5px 16px' }}>
               <span style={{ width: 8, height: 8, background: '#4ade80', borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
-              <span style={{ color: '#4ade80', fontSize: '0.85rem' }}>En menos de 5 min tu unidad será atendida</span>
+              <span style={{ color: '#4ade80', fontSize: '0.85rem' }}>Tu solicitud fue recibida correctamente. Nuestro equipo asignará asistencia para tu unidad en breve.</span>
             </div>
           </div>
 
