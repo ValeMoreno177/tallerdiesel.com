@@ -296,15 +296,33 @@ tbody td { padding: 10px 14px; color: #374151; white-space: nowrap; }
   thead th { padding: 8px 10px; font-size: 0.7rem; }
   tbody td { padding: 8px 10px; }
 
-  /* Layout de 3 columnas del Login se apila en celular */
+ /* Layout de 3 columnas del Login se apila en celular */
+  
   .login-grid { grid-template-columns: 1fr !important; padding: 1.25rem 1rem !important; gap: 1rem !important; }
   .login-features { display: none !important; } /* tarjetas decorativas: se ocultan para priorizar el formulario */
   .login-card { width: 100% !important; max-width: 420px; margin: 0 auto; }
-}
 
-@media (max-width: 400px) {
-  .grid-stats { grid-template-columns: 1fr 1fr; }
-  .col-sticky-2 { width: 130px !important; min-width: 130px !important; max-width: 130px !important; }
-  .col-sticky-3 { left: 230px !important; }
-  .col-sticky-4 { left: 340px !important; }
+  /* En celular, solo Ticket y Empresa quedan fijas (sticky) al deslizar;
+     Fecha y Estatus se desactivan para dejar más espacio disponible. */
+  
+  .col-sticky-3, .col-sticky-4 {
+    position: static !important;
+    box-shadow: none !important;
+    width: auto !important;
+    min-width: 90px !important;
+    max-width: none !important;
+  }
+  .col-sticky-1 {
+    width: 80px !important;
+    min-width: 80px !important;
+    max-width: 80px !important;
+  }
+  .col-sticky-2 {
+    left: 80px !important;
+    width: 140px !important;
+    min-width: 140px !important;
+    max-width: 140px !important;
+    box-shadow: 2px 0 4px -2px rgba(0,0,0,0.25);
+  }
+  .table-wrap { -webkit-overflow-scrolling: touch; }
 }
