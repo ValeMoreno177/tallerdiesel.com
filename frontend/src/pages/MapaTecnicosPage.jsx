@@ -141,9 +141,10 @@ export default function MapaTecnicosPage() {
   return (
     <div className="dashboard-layout">
       <Sidebar />
-      <main
+     <main
         className="main-content-fluid"
         style={{
+          flex: 1,
           background:
             "linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?w=1600&q=80) center/cover no-repeat",
           display: "flex",
