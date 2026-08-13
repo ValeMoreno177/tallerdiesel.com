@@ -42,6 +42,7 @@ export default function SolicitarTecnicoPage() {
   const [enviando,  setEnviando]  = useState(false)
   const [error,     setError]     = useState('')
   const [enviado,   setEnviado]   = useState(false)
+  const [ticketCreadoId, setTicketCreadoId] = useState(null)
 
   // Mapa
   const [tecnicos,       setTecnicos]       = useState([])
@@ -84,14 +85,19 @@ export default function SolicitarTecnicoPage() {
     setTecnicoElegido(t)
     setConfirmando(t)
     setTimeout(() => setConfirmando(null), 3000)
+    // Guarda de verdad la elección en el ticket recién creado (antes solo quedaba en el navegador)
+    if (ticketCreadoId) {
+      api.post(`/tickets/${ticketCreadoId}/asignar_tecnico/`, { tecnico_id: t.id })
+        .catch(e => console.error('No se pudo asignar el técnico al ticket:', e))
+    }
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setEnviando(true); setError('')
     try {
-      const tElegido = (() => { try { return JSON.parse(localStorage.getItem('td_tecnico_elegido') || 'null') } catch { return null } })()
-      await api.post('/solicitud/', { ...form, tipo_solicitud: 'tecnico', tecnico_id: tElegido?.id || null })
+      const { data } = await api.post('/solicitud/', { ...form, tipo_solicitud: 'tecnico' })
+      setTicketCreadoId(data?.id || null)
       localStorage.setItem('td_form_tecnico_enviado', 'true')
       setEnviado(true)
     } catch (err) {
