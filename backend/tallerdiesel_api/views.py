@@ -558,9 +558,19 @@ class TicketViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def asignar_tecnico(self, request, pk=None):
         """El Coordinador o el Administrador asignan un técnico al ticket.
+        El propio Cliente también puede fijarlo, pero solo en su propio ticket,
+        recién creado y sin técnico todavía (elección hecha en el mapa).
         Al asignarlo, si el ticket estaba 'Pendiente' pasa automáticamente
         a 'Atendido'."""
-        if request.user.rol not in ('admin', 'coordinador'):
+        ticket = self.get_object()
+        es_staff = request.user.rol in ('admin', 'coordinador')
+        es_cliente_dueño_sin_tecnico = (
+            request.user.rol == 'cliente'
+            and ticket.cliente_id == request.user.id
+            and ticket.tecnico_id is None
+            and ticket.estatus == 'pendiente'
+        )
+        if not (es_staff or es_cliente_dueño_sin_tecnico):
             return Response({'error': 'No tienes permiso para asignar técnicos.'}, status=403)
         ticket = self.get_object()
         tecnico_id = request.data.get('tecnico_id') or request.data.get('tecnico')
@@ -1161,6 +1171,7 @@ def solicitud_servicio(request):
         return Response({
             'mensaje': 'Solicitud recibida. Te contactaremos en menos de 5 minutos.',
             'ticket_id': ticket.ticket_id,
+            'id': ticket.id,
         }, status=201)
     return Response(serializer.errors, status=400)
 
