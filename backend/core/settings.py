@@ -2,12 +2,18 @@ import os
 import dj_database_url
 from pathlib import Path
 from datetime import timedelta
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Carga backend/.env si existe (solo en tu máquina — ese archivo NUNCA se sube a git,
+# ya está en .gitignore). En Railway no hace falta: las variables ya vienen inyectadas
+# directo por la plataforma.
+load_dotenv(BASE_DIR / '.env')
+
 # ══════════════════════════════════════════════
-#  Variables de entorno (Railway/Vercel en producción, valores por
-#  defecto para que siga funcionando igual en tu máquina local)
+#  Variables de entorno (Railway/Vercel en producción, backend/.env en tu
+#  máquina local — ver backend/.env.example)
 # ══════════════════════════════════════════════
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-tallerdiesel-change-this-in-production-2024')
@@ -182,5 +188,5 @@ EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False') == 'True'
 EMAIL_TIMEOUT = 10
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'tallerdiesel847@gmail.com')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'vjlbnwamohxatflr')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', f'TallerDiesel <{EMAIL_HOST_USER}>')
