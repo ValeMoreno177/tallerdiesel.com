@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import AsignarTecnicoModal from './AsignarTecnicoModal'
 
 export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLectura = false }) {
   const { user } = useAuth()
@@ -8,6 +9,7 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const [enviando,     setEnviando]     = useState(false)
   const [localTicket,  setLocalTicket]  = useState(ticket)
   const [permisoCargando, setPermisoCargando] = useState(false)
+  const [asignandoTecnico, setAsignandoTecnico] = useState(false)
 
   const fmt = n => `$${parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
   const esTerminado = localTicket.estatus === 'terminado'
@@ -21,6 +23,12 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
     (user?.rol === 'cliente' && !esTerminado)
   )
   const bloqueado = !puedeComentar
+
+  // Admin y Coordinador pueden asignar/cambiar el técnico de un ticket que no esté finalizado
+  const puedeAsignarTecnico = !soloLectura && (
+    user?.rol === 'admin' ||
+    (user?.rol === 'coordinador' && (!esTerminado || tienePermisoEdicion))
+  )
 
   const ROL_COLOR = { cliente: '#0DE255', coordinador: '#2563eb', admin: '#111827', tecnico: '#f59e0b' }
   const ROL_LABEL = { cliente: 'Cliente', coordinador: 'Coordinador', admin: 'Admin', tecnico: 'Técnico' }
@@ -115,6 +123,11 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                   <span style={{ fontWeight: 500, textAlign: 'right', maxWidth: '60%' }}>{v}</span>
                 </div>
               ))}
+              {puedeAsignarTecnico && (
+                <button className="btn btn-sm btn-ghost" style={{ marginTop: 8 }} onClick={() => setAsignandoTecnico(true)}>
+                  🔧 {localTicket.tecnico_nombre ? 'Cambiar técnico' : 'Asignar técnico'}
+                </button>
+              )}
             </div>
 
             {/* Financiero */}
@@ -204,6 +217,28 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
           </div>
         </div>
       </div>
+
+      {asignandoTecnico && (
+        <AsignarTecnicoModal
+          ticketId={localTicket.id}
+          ticketFolio={localTicket.ticket_id}
+          ticketInfo={{
+            empresa: localTicket.empresa,
+            lugar: localTicket.lugar,
+            unidad: localTicket.unidad,
+            tecnico_nombre: localTicket.tecnico_nombre,
+          }}
+          onClose={() => setAsignandoTecnico(false)}
+          onAsignado={async () => {
+            setAsignandoTecnico(false)
+            try {
+              const { data } = await api.get(`/tickets/${localTicket.id}/`)
+              setLocalTicket(data)
+            } catch (e) { /* si falla el refetch, igual se refresca la lista de fondo */ }
+            onUpdated && onUpdated()
+          }}
+        />
+      )}
     </div>
   )
 }
