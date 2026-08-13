@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import api from '../api/client'
 
-export default function AsignarTecnicoModal({ solicitud, onClose, onAsignado }) {
+export default function AsignarTecnicoModal({ solicitud, ticketId: ticketIdProp, ticketFolio: ticketFolioProp, ticketInfo, onClose, onAsignado }) {
   const [tecnicos, setTecnicos] = useState([])
   const [tecnicoId, setTecnicoId] = useState('')
   const [loadingTecnicos, setLoadingTecnicos] = useState(true)
@@ -14,8 +14,10 @@ export default function AsignarTecnicoModal({ solicitud, onClose, onAsignado }) 
       .finally(() => setLoadingTecnicos(false))
   }, [])
 
-  const ticketId = solicitud.ticket
-  const ticketFolio = solicitud.ticket_codigo
+  // Se puede abrir con una "solicitud" (flujo original) o directo con un ticket
+  const ticketId = ticketIdProp || solicitud?.ticket
+  const ticketFolio = ticketFolioProp || solicitud?.ticket_codigo
+  const info = ticketInfo || solicitud
 
   const asignar = async () => {
     if (!tecnicoId) { setError('Selecciona un técnico.'); return }
@@ -32,18 +34,21 @@ export default function AsignarTecnicoModal({ solicitud, onClose, onAsignado }) 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
-        <h3 className="modal-title">Asignar técnico</h3>
+        <h3 className="modal-title">{info?.tecnico_nombre ? 'Cambiar técnico' : 'Asignar técnico'}</h3>
         <p className="modal-subtitle">
-          {ticketFolio ? `Ticket ${ticketFolio} — ` : ''}{solicitud.nombre_completo}
+          {ticketFolio ? `Ticket ${ticketFolio} — ` : ''}{info?.nombre_completo || info?.empresa || ''}
         </p>
 
-        <div style={{ background: '#f9fafb', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#374151' }}>
-          {solicitud.empresa && <div><strong>Empresa:</strong> {solicitud.empresa}</div>}
-          {solicitud.lugar && <div><strong>Lugar:</strong> {solicitud.lugar}</div>}
-          {solicitud.unidad && <div><strong>Unidad:</strong> {solicitud.unidad}</div>}
-          <div><strong>Teléfono:</strong> {solicitud.telefono}</div>
-          <div style={{ marginTop: 6 }}>{solicitud.problema}</div>
-        </div>
+        {info && (
+          <div style={{ background: '#f9fafb', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#374151' }}>
+            {info.empresa && <div><strong>Empresa:</strong> {info.empresa}</div>}
+            {info.lugar && <div><strong>Lugar:</strong> {info.lugar}</div>}
+            {info.unidad && <div><strong>Unidad:</strong> {info.unidad}</div>}
+            {info.telefono && <div><strong>Teléfono:</strong> {info.telefono}</div>}
+            {info.tecnico_nombre && <div style={{ marginTop: 4 }}><strong>Técnico actual:</strong> {info.tecnico_nombre}</div>}
+            {(info.problema || info.reparacion) && <div style={{ marginTop: 6 }}>{info.problema || info.reparacion}</div>}
+          </div>
+        )}
 
         {error && <div style={{ background: '#fef2f2', color: '#991b1b', padding: '8px 14px', borderRadius: 8, marginBottom: '0.75rem', fontSize: '0.875rem' }}>{error}</div>}
 
@@ -64,14 +69,15 @@ export default function AsignarTecnicoModal({ solicitud, onClose, onAsignado }) 
         </div>
 
         <p style={{ fontSize: '0.78rem', color: '#9ca3af', marginTop: 4 }}>
-          Al asignar un técnico, el ticket pasará automáticamente a estatus <strong>En camino</strong> y el
-          nombre del técnico se mostrará al cliente.
+          {info?.tecnico_nombre
+            ? 'El nuevo técnico sustituirá al actual y se le mostrará al cliente.'
+            : 'Al asignar un técnico, el ticket pasará automáticamente a estatus En camino y el nombre del técnico se mostrará al cliente.'}
         </p>
 
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary" onClick={asignar} disabled={guardando || !tecnicoId}>
-            {guardando ? 'Asignando...' : 'Asignar técnico'}
+            {guardando ? 'Guardando...' : info?.tecnico_nombre ? 'Cambiar técnico' : 'Asignar técnico'}
           </button>
         </div>
       </div>
