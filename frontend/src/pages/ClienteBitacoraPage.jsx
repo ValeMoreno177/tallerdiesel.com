@@ -90,7 +90,11 @@ function TicketCard({ t, onUpdated }) {
         </div>
       </div>
 
-      <PasosTicket estatus={t.estatus} />
+      {/* La línea de tiempo por estatus no aplica a servicios directos con técnico,
+          ya que nadie actualiza esos pasos — solo se muestra si ya se sumó un coordinador. */}
+      {(t.tipo_solicitud !== 'tecnico' || t.coordinador_nombre) && (
+        <PasosTicket estatus={t.estatus} />
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, fontSize: '0.85rem', color: '#374151', marginTop: 4 }}>
         <span>👷 Técnico: <strong>{t.tecnico_nombre || 'Aún no asignado'}</strong></span>
