@@ -99,7 +99,9 @@ export default function DashboardCliente() {
                   <td>
                     <div>
                       <span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span>
-                      <MiniBarra estatus={t.estatus} />
+                      {(t.tipo_solicitud !== 'tecnico' || t.coordinador_nombre) && (
+                        <MiniBarra estatus={t.estatus} />
+                      )}
                     </div>
                   </td>
                   <td>
