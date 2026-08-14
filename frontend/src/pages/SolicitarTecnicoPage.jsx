@@ -42,7 +42,10 @@ export default function SolicitarTecnicoPage() {
   const [enviando,  setEnviando]  = useState(false)
   const [error,     setError]     = useState('')
   const [enviado,   setEnviado]   = useState(false)
-  const [ticketCreadoId, setTicketCreadoId] = useState(null)
+  const [ticketCreadoId, setTicketCreadoId] = useState(() => {
+    const guardado = localStorage.getItem('td_ticket_pendiente_tecnico')
+    return guardado ? Number(guardado) : null
+  })
 
   // Mapa
   const [tecnicos,       setTecnicos]       = useState([])
@@ -85,9 +88,17 @@ export default function SolicitarTecnicoPage() {
     setTecnicoElegido(t)
     setConfirmando(t)
     setTimeout(() => setConfirmando(null), 3000)
-    // Guarda de verdad la elección en el ticket recién creado (antes solo quedaba en el navegador)
+    // Guarda de verdad la elección en el ticket recién creado (antes solo quedaba en el navegador,
+    // y se perdía si recargabas la página o volvías después). Ahora sobrevive porque también
+    // se guarda el id del ticket en localStorage, no solo en memoria.
     if (ticketCreadoId) {
       api.post(`/tickets/${ticketCreadoId}/asignar_tecnico/`, { tecnico_id: t.id })
+        .then(() => {
+          localStorage.removeItem('td_ticket_pendiente_tecnico')
+          // Ya quedó confirmado en el servidor — se quita el aviso para que no
+          // se quede mostrando este técnico en futuros tickets sin relación.
+          localStorage.removeItem('td_tecnico_elegido')
+        })
         .catch(e => console.error('No se pudo asignar el técnico al ticket:', e))
     }
   }
@@ -98,6 +109,7 @@ export default function SolicitarTecnicoPage() {
     try {
       const { data } = await api.post('/solicitud/', { ...form, tipo_solicitud: 'tecnico' })
       setTicketCreadoId(data?.id || null)
+      if (data?.id) localStorage.setItem('td_ticket_pendiente_tecnico', String(data.id))
       localStorage.setItem('td_form_tecnico_enviado', 'true')
       setEnviado(true)
     } catch (err) {
