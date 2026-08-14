@@ -173,3 +173,23 @@ def email_nuevo_comentario(autor_nombre, autor_rol, ticket_id, texto, url_destin
       {_boton(boton_texto, url_destino)}
     """
     return _wrapper(contenido)
+
+
+def email_tecnico_asignado(tecnico_nombre, ticket_id, es_cambio, url_destino):
+    """Se manda al cliente cuando se le asigna o se le cambia el técnico de su servicio."""
+    badge_texto = 'TÉCNICO ACTUALIZADO' if es_cambio else 'TÉCNICO ASIGNADO'
+    titulo = 'Cambiamos tu técnico 🔧' if es_cambio else '¡Ya tienes técnico asignado! 🔧'
+    contenido = f"""
+      <span style="display:inline-block;background:#7c3aed;color:#fff;font-family:Arial,sans-serif;font-size:11px;font-weight:800;letter-spacing:1px;padding:5px 14px;border-radius:20px;">
+        {badge_texto}
+      </span>
+      <h2 style="font-family:Arial,sans-serif;font-size:20px;color:#111827;margin:16px 0 6px;">{titulo}</h2>
+      <p style="font-family:Arial,sans-serif;font-size:13px;color:#6b7280;margin:0 0 14px;">Ticket {ticket_id}</p>
+      <div style="padding:14px 16px;background:#f9fafb;border-left:4px solid #7c3aed;border-radius:6px;">
+        <span style="font-family:Arial,sans-serif;font-size:14px;color:#374151;">
+          <strong>{tecnico_nombre}</strong> {'ahora' if es_cambio else ''} atenderá tu servicio.
+        </span>
+      </div>
+      {_boton('Ver detalle del servicio →', url_destino)}
+    """
+    return _wrapper(contenido)
