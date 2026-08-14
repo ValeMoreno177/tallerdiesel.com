@@ -170,14 +170,14 @@ export default function DashboardCliente() {
                     ⚠️ Este técnico está ocupado actualmente. Puedes contactarlo o elegir otro.
                   </div>
                 )}
+                <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: 4 }}>
+                  ¿Quieres otro técnico para este mismo servicio? Ábrelo abajo en "Servicios" y usa el botón "Cambiar técnico" dentro del ticket.
+                </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                 <a href={`https://wa.me/${tecnicoElegido.telefono?.replace(/\D/g,'')}`} target="_blank" rel="noreferrer">
                   <button className="btn btn-sm" style={{ background: '#059669', color: 'white' }}>💬 WhatsApp</button>
                 </a>
-                <button className="btn btn-sm btn-ghost" onClick={() => navigate('/solicitar-tecnico')}>
-                  🔄 Cambiar técnico
-                </button>
                 <button className="btn btn-sm btn-ghost" onClick={() => {
                   localStorage.removeItem('td_tecnico_elegido')
                   setTecnicoElegido(null)
