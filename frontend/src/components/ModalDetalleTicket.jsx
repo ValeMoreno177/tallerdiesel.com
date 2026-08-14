@@ -24,10 +24,12 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   )
   const bloqueado = !puedeComentar
 
-  // Admin y Coordinador pueden asignar/cambiar el técnico de un ticket que no esté finalizado
+  // Admin y Coordinador pueden asignar/cambiar el técnico de un ticket que no esté finalizado.
+  // El Cliente también puede, pero solo en su propio ticket de tipo "directo con técnico".
   const puedeAsignarTecnico = !soloLectura && (
     user?.rol === 'admin' ||
-    (user?.rol === 'coordinador' && (!esTerminado || tienePermisoEdicion))
+    (user?.rol === 'coordinador' && (!esTerminado || tienePermisoEdicion)) ||
+    (user?.rol === 'cliente' && localTicket.tipo_solicitud === 'tecnico' && !esTerminado)
   )
 
   const ROL_COLOR = { cliente: '#0DE255', coordinador: '#2563eb', admin: '#111827', tecnico: '#f59e0b' }
