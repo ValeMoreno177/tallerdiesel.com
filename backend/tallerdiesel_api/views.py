@@ -707,7 +707,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                 else:
                     destinatarios_usuarios = list(User.objects.filter(rol='admin', is_active=True))
                 emails = [u.email for u in destinatarios_usuarios if u.email]
-                correo_empresa = 'tallerdiesel847@gmail.com'
+                correo_empresa = settings.EMAIL_EMPRESA
                 if correo_empresa not in emails:
                     emails.append(correo_empresa)
                 for u in destinatarios_usuarios:
@@ -1171,7 +1171,7 @@ def solicitud_servicio(request):
         emails_destino = [d.email for d in destinatarios if d.email]
 
         # El correo de la empresa siempre debe recibir la solicitud de coordinador
-        correo_empresa = 'tallerdiesel847@gmail.com'
+        correo_empresa = settings.EMAIL_EMPRESA
         if correo_empresa not in emails_destino:
             emails_destino.append(correo_empresa)
 
