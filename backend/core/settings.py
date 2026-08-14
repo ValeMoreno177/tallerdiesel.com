@@ -190,3 +190,8 @@ EMAIL_TIMEOUT = 10
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'tallerdiesel847@gmail.com')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', f'TallerDiesel <{EMAIL_HOST_USER}>')
+
+# Buzón que recibe copia de los avisos generales (nuevas solicitudes, comentarios
+# de clientes sin coordinador asignado, etc.) — no tiene que ser la misma cuenta
+# que envía los correos. Cámbialo aquí o en la variable de entorno EMAIL_EMPRESA.
+EMAIL_EMPRESA = os.environ.get('EMAIL_EMPRESA', 'coordinador@tallerdiesel.com')
