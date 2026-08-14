@@ -18,7 +18,7 @@ import io
 from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
                      Notificacion, ComentarioTicket, TokenVerificacion, ConfiguracionEmpresa,
                      CodigoRecuperacion, UnidadFlotilla)
-from .emails import enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario
+from .emails import enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
 from .serializers import (
     UsuarioSerializer, RegistroSerializer, TicketSerializer,
     TecnicoSerializer, OpinionSerializer, ProveedorSerializer,
@@ -564,13 +564,16 @@ class TicketViewSet(viewsets.ModelViewSet):
         a 'Atendido'."""
         ticket = self.get_object()
         es_staff = request.user.rol in ('admin', 'coordinador')
-        es_cliente_dueño_sin_tecnico = (
+        # El cliente puede elegir o CAMBIAR el técnico de su propio ticket, siempre que
+        # sea un servicio directo con técnico (no uno atendido por coordinador) y no
+        # esté ya finalizado.
+        es_cliente_dueño_tecnico_directo = (
             request.user.rol == 'cliente'
             and ticket.cliente_id == request.user.id
-            and ticket.tecnico_id is None
-            and ticket.estatus == 'pendiente'
+            and ticket.tipo_solicitud == 'tecnico'
+            and ticket.estatus != 'terminado'
         )
-        if not (es_staff or es_cliente_dueño_sin_tecnico):
+        if not (es_staff or es_cliente_dueño_tecnico_directo):
             return Response({'error': 'No tienes permiso para asignar técnicos.'}, status=403)
         ticket = self.get_object()
         tecnico_id = request.data.get('tecnico_id') or request.data.get('tecnico')
@@ -581,6 +584,8 @@ class TicketViewSet(viewsets.ModelViewSet):
         except Tecnico.DoesNotExist:
             return Response({'error': 'Técnico no encontrado.'}, status=404)
 
+        tecnico_anterior_id = ticket.tecnico_id
+        es_cambio = tecnico_anterior_id is not None and tecnico_anterior_id != tecnico.id
         ticket.tecnico = tecnico
         estatus_anterior = ticket.estatus
         if ticket.estatus == 'pendiente':
@@ -605,10 +610,74 @@ class TicketViewSet(viewsets.ModelViewSet):
         if ticket.cliente_id:
             Notificacion.objects.create(
                 destinatario=ticket.cliente,
-                titulo='Técnico asignado a tu servicio',
-                mensaje=f'{tecnico.nombre} fue asignado a tu ticket {ticket.ticket_id}.',
+                titulo='Técnico actualizado' if es_cambio else 'Técnico asignado a tu servicio',
+                mensaje=f'{tecnico.nombre} {"ahora" if es_cambio else ""} fue asignado a tu ticket {ticket.ticket_id}.',
                 tipo='tecnico_asignado', referencia_id=ticket.id,
             )
+            if ticket.cliente.email:
+                try:
+                    url = f'{settings.FRONTEND_URL}/cliente/dashboard'
+                    asunto = f'{"🔧 Cambiamos tu técnico" if es_cambio else "🔧 Ya tienes técnico asignado"} — {ticket.ticket_id}'
+                    texto_plano = f'{tecnico.nombre} {"ahora" if es_cambio else ""} atenderá tu servicio (ticket {ticket.ticket_id}).\n\nIngresa al sistema: {url}'
+                    enviar_html(asunto, [ticket.cliente.email],
+                                email_tecnico_asignado(tecnico.nombre, ticket.ticket_id, es_cambio, url),
+                                texto_plano)
+                except Exception as e:
+                    print(f'⚠️  Error enviando correo de técnico asignado: {e}')
+
+        return Response(TicketSerializer(ticket).data)
+
+    @action(detail=True, methods=['post'])
+    def tomar_como_coordinador(self, request, pk=None):
+        """Cuando un cliente pide en un comentario que su servicio (originalmente
+        directo con técnico) lo atienda un coordinador, este endpoint permite que
+        el Coordinador (o Admin, indicando a quién) tome el ticket. A partir de
+        ahí el ticket muestra la línea de tiempo por estatus como cualquier
+        servicio coordinado."""
+        ticket = self.get_object()
+        if request.user.rol not in ('admin', 'coordinador'):
+            return Response({'error': 'No tienes permiso para tomar este servicio.'}, status=403)
+        if ticket.estatus == 'terminado':
+            return Response({'error': 'Este ticket ya está finalizado.'}, status=400)
+
+        coordinador_id = request.data.get('coordinador_id')
+        if coordinador_id:
+            try:
+                nuevo_coordinador = User.objects.get(pk=coordinador_id, rol='coordinador')
+            except Usuario.DoesNotExist:
+                return Response({'error': 'Coordinador no encontrado.'}, status=404)
+        elif request.user.rol == 'coordinador':
+            nuevo_coordinador = request.user
+        else:
+            return Response({'error': 'Indica qué coordinador va a tomar este servicio.'}, status=400)
+
+        ticket.coordinador = nuevo_coordinador
+        ticket.save()
+
+        ComentarioTicket.objects.create(
+            ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
+            texto=f'{nuevo_coordinador.nombre_completo} tomó este servicio como coordinador.',
+        )
+
+        if ticket.cliente_id:
+            Notificacion.objects.create(
+                destinatario=ticket.cliente,
+                titulo='Un coordinador tomó tu servicio',
+                mensaje=f'{nuevo_coordinador.nombre_completo} ahora coordina tu ticket {ticket.ticket_id}.',
+                tipo='coordinador_asignado', referencia_id=ticket.id,
+            )
+            if ticket.cliente.email:
+                try:
+                    url = f'{settings.FRONTEND_URL}/cliente/dashboard'
+                    enviar_html(
+                        asunto=f'🧑‍💼 Un coordinador tomó tu servicio — {ticket.ticket_id}',
+                        destinatarios=[ticket.cliente.email],
+                        html_body=email_nuevo_comentario(nuevo_coordinador.nombre_completo, 'coordinador', ticket.ticket_id,
+                                                          f'{nuevo_coordinador.nombre_completo} tomó tu servicio y ahora le da seguimiento personal.', url),
+                        text_body=f'{nuevo_coordinador.nombre_completo} tomó tu servicio {ticket.ticket_id} y ahora le da seguimiento. Ingresa al sistema: {url}',
+                    )
+                except Exception as e:
+                    print(f'⚠️  Error enviando correo de coordinador asignado: {e}')
 
         return Response(TicketSerializer(ticket).data)
 
@@ -636,7 +705,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                 if ticket.coordinador_id:
                     destinatarios_usuarios = [ticket.coordinador]
                 else:
-                    destinatarios_usuarios = list(Usuario.objects.filter(rol='admin', is_active=True))
+                    destinatarios_usuarios = list(User.objects.filter(rol='admin', is_active=True))
                 emails = [u.email for u in destinatarios_usuarios if u.email]
                 correo_empresa = 'tallerdiesel847@gmail.com'
                 if correo_empresa not in emails:
