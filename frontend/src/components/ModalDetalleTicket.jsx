@@ -32,6 +32,23 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
     (user?.rol === 'cliente' && localTicket.tipo_solicitud === 'tecnico' && !esTerminado)
   )
 
+  // El Coordinador puede "tomar" un servicio que iba directo con técnico (por ejemplo,
+  // cuando el cliente lo pide en un comentario), y así pasa a mostrar seguimiento por estatus.
+  const [tomandoServicio, setTomandoServicio] = useState(false)
+  const puedeTomarComoCoordinador = !soloLectura && user?.rol === 'coordinador' && !esTerminado
+    && localTicket.tipo_solicitud === 'tecnico' && !localTicket.coordinador_nombre
+
+  const tomarComoCoordinador = async () => {
+    setTomandoServicio(true)
+    try {
+      const { data } = await api.post(`/tickets/${localTicket.id}/tomar_como_coordinador/`, {})
+      setLocalTicket(data)
+      onUpdated && onUpdated()
+    } catch (e) {
+      alert('No se pudo tomar el servicio. ' + (e?.response?.data?.error || ''))
+    } finally { setTomandoServicio(false) }
+  }
+
   const ROL_COLOR = { cliente: '#0DE255', coordinador: '#2563eb', admin: '#111827', tecnico: '#f59e0b' }
   const ROL_LABEL = { cliente: 'Cliente', coordinador: 'Coordinador', admin: 'Admin', tecnico: 'Técnico' }
 
@@ -128,6 +145,12 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
               {puedeAsignarTecnico && (
                 <button className="btn btn-sm btn-ghost" style={{ marginTop: 8 }} onClick={() => setAsignandoTecnico(true)}>
                   🔧 {localTicket.tecnico_nombre ? 'Cambiar técnico' : 'Asignar técnico'}
+                </button>
+              )}
+              {puedeTomarComoCoordinador && (
+                <button className="btn btn-sm btn-ghost" style={{ marginTop: 8, marginLeft: 8 }}
+                  onClick={tomarComoCoordinador} disabled={tomandoServicio}>
+                  🧑‍💼 {tomandoServicio ? 'Tomando...' : 'Tomar como coordinador'}
                 </button>
               )}
             </div>
