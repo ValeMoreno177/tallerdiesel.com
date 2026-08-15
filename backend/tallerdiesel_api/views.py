@@ -184,7 +184,7 @@ class PuedeEditarTicket(BasePermission):
         if obj.cliente_id != request.user.id:
             return False
         # Cliente: solo su propio ticket
-        if view.action in ('update', 'partial_update', 'agregar_comentario'):
+        if view.action in ('update', 'partial_update', 'agregar_comentario', 'asignar_tecnico'):
             return obj.estatus != 'terminado'
         if view.action == 'calificar':
             return obj.estatus == 'terminado'
