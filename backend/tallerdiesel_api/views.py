@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status
+from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view, permission_classes, action, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission, SAFE_METHODS
 from rest_framework.response import Response
@@ -482,6 +483,12 @@ class TicketViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         from django.db.models import Q
         qs = super().get_queryset()
+        # Por default no se muestran los tickets en la papelera, salvo que se pida explícitamente
+        # con ?eliminados=1 (usado por la acción "papelera" de abajo).
+        if self.request.query_params.get('eliminados') == '1':
+            qs = qs.filter(eliminado=True)
+        else:
+            qs = qs.filter(eliminado=False)
         user = self.request.user
         if user.rol == 'cliente':
             qs = qs.filter(cliente=user)
@@ -492,6 +499,40 @@ class TicketViewSet(viewsets.ModelViewSet):
         if estatus:
             qs = qs.filter(estatus=estatus)
         return qs
+
+    def perform_destroy(self, instance):
+        """No se borra el registro de verdad — se manda a la papelera, para
+        poder consultarlo después y para que su folio (TDxxx) quede libre y
+        el siguiente ticket nuevo lo reutilice."""
+        from django.utils import timezone
+        instance.eliminado = True
+        instance.eliminado_en = timezone.now()
+        instance.eliminado_por = self.request.user
+        instance.save()
+
+    @action(detail=False, methods=['get'])
+    def papelera(self, request):
+        """Lista de tickets eliminados (solo Admin y Coordinador)."""
+        if request.user.rol not in ('admin', 'coordinador'):
+            return Response({'error': 'No tienes permiso para ver la papelera.'}, status=403)
+        qs = Ticket.objects.filter(eliminado=True).order_by('-eliminado_en')
+        return Response(TicketSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['post'])
+    def restaurar(self, request, pk=None):
+        """Regresa un ticket eliminado a la lista activa (solo Admin y Coordinador)."""
+        if request.user.rol not in ('admin', 'coordinador'):
+            return Response({'error': 'No tienes permiso para restaurar tickets.'}, status=403)
+        ticket = get_object_or_404(Ticket, pk=pk, eliminado=True)
+        # Si mientras estuvo en la papelera ya se reutilizó su folio en un ticket nuevo,
+        # se le agrega un sufijo para no romper el folio único entre los activos.
+        if Ticket.objects.filter(ticket_id=ticket.ticket_id, eliminado=False).exclude(pk=ticket.pk).exists():
+            ticket.ticket_id = f'{ticket.ticket_id}-R'
+        ticket.eliminado = False
+        ticket.eliminado_en = None
+        ticket.eliminado_por = None
+        ticket.save()
+        return Response(TicketSerializer(ticket).data)
 
     def update(self, request, *args, **kwargs):
         ticket = self.get_object()
