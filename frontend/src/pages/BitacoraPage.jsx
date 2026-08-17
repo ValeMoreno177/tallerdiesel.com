@@ -57,6 +57,10 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
       nullToStr.forEach(k => { if (t[k] == null) t[k] = '' })
       const nullToNum = ['sal_costo','mo_costo','ref_costo','sal_ganancia','mo_ganancia','ref_ganancia']
       nullToNum.forEach(k => { if (t[k] == null) t[k] = '0' })
+      // Si el ticket todavía no tiene coordinador y quien edita es Coordinador, se
+      // toma por default a sí mismo — así lo que se ve en pantalla (su nombre)
+      // coincide con lo que en verdad se va a guardar al presionar Guardar.
+      if (!t.coordinador && esCoord) t.coordinador = String(user.id)
       return t
     }
     return { ...FORM_VACIO, coordinador: esCoord ? String(user.id) : '' }
@@ -99,6 +103,12 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
       tecnico:       form.tecnico       || null,
       fecha_factura: form.fecha_factura || null,
       factura:       form.factura       || '',
+    }
+    // Si el servicio era "directo con técnico" y el Coordinador lo toma (queda con
+    // coordinador asignado y sin técnico), pasa automáticamente a tipo "coordinador"
+    // — así el cliente ya ve la línea de tiempo, sin que el Admin tenga que hacer nada.
+    if (!esNuevo && ticket?.tipo_solicitud === 'tecnico' && payload.coordinador && !payload.tecnico) {
+      payload.tipo_solicitud = 'coordinador'
     }
     try {
       if (esNuevo) await api.post('/tickets/', payload)
