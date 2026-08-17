@@ -135,7 +135,7 @@ class Ticket(models.Model):
     ]
     EST_FACTURA_CHOICES = [('pagada','Pagada'),('pendiente','Pendiente')]
 
-    ticket_id  = models.CharField(max_length=20, unique=True, blank=True)
+    ticket_id  = models.CharField(max_length=20, blank=True)  # único solo entre los NO eliminados (ver Meta)
     empresa    = models.CharField(max_length=200)
     fecha      = models.DateField()
     estatus    = models.CharField(max_length=20, choices=ESTATUS_CHOICES, default='pendiente')
@@ -176,17 +176,31 @@ class Ticket(models.Model):
     fecha_creacion      = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
+    # ── Papelera (borrado suave) ──────────────────────────────────────────
+    eliminado    = models.BooleanField(default=False)
+    eliminado_en = models.DateTimeField(null=True, blank=True)
+    eliminado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
+                        related_name='tickets_eliminados')
+
     class Meta:
         ordering = ['-fecha_creacion']
+        constraints = [
+            models.UniqueConstraint(fields=['ticket_id'], condition=models.Q(eliminado=False),
+                                     name='ticket_id_unico_entre_activos'),
+        ]
 
     def __str__(self):
         return f'{self.ticket_id} - {self.empresa}'
 
     def save(self, *args, **kwargs):
         if not self.ticket_id:
-            last = Ticket.objects.order_by('-id').first()
-            num  = (last.id + 1) if last else 1
-            self.ticket_id = f'TD{num:03d}'
+            import re
+            max_num = 0
+            for tid in Ticket.objects.filter(eliminado=False).exclude(ticket_id='').values_list('ticket_id', flat=True):
+                m = re.match(r'TD(\d+)$', tid)
+                if m:
+                    max_num = max(max_num, int(m.group(1)))
+            self.ticket_id = f'TD{max_num + 1:03d}'
         super().save(*args, **kwargs)
 
     # ── Fórmulas (exactas al requerimiento) ──────────────────────────────────
