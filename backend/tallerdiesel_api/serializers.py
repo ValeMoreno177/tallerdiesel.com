@@ -102,6 +102,7 @@ class TicketSerializer(serializers.ModelSerializer):
     coordinador_nombre  = serializers.SerializerMethodField()
     proveedor_nombre    = serializers.SerializerMethodField()
     tecnico_nombre       = serializers.SerializerMethodField()
+    eliminado_por_nombre = serializers.SerializerMethodField()
     estatus_display      = serializers.CharField(source='get_estatus_display', read_only=True)
     # Campos calculados — nombres iguales al frontend
     costo    = serializers.ReadOnlyField()
@@ -120,6 +121,9 @@ class TicketSerializer(serializers.ModelSerializer):
 
     def get_coordinador_nombre(self, obj):
         return obj.coordinador.nombre_completo if obj.coordinador else None
+
+    def get_eliminado_por_nombre(self, obj):
+        return obj.eliminado_por.nombre_completo if obj.eliminado_por else None
 
     def get_proveedor_nombre(self, obj):
         return obj.proveedor.nombre if obj.proveedor else None
