@@ -342,6 +342,9 @@ export default function BitacoraPage({ rol }) {
   const [paginaSiguiente, setPaginaSiguiente] = useState(null)   // URL de la siguiente página (o null)
   const [cargandoMas, setCargandoMas] = useState(false)
   const [totalTickets, setTotalTickets] = useState(0)
+  const [papeleraTickets, setPapeleraTickets] = useState([])
+  const [loadingPapelera, setLoadingPapelera] = useState(false)
+  const [restaurando, setRestaurando] = useState(null)
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -399,6 +402,28 @@ export default function BitacoraPage({ rol }) {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
+  const fetchPapelera = useCallback(() => {
+    setLoadingPapelera(true)
+    api.get('/tickets/papelera/')
+      .then(({ data }) => setPapeleraTickets(data))
+      .finally(() => setLoadingPapelera(false))
+  }, [])
+
+  useEffect(() => {
+    if (tipoFiltro === 'papelera') fetchPapelera()
+  }, [tipoFiltro, fetchPapelera])
+
+  const restaurarTicket = async (id) => {
+    setRestaurando(id)
+    try {
+      await api.post(`/tickets/${id}/restaurar/`)
+      fetchPapelera()
+      fetchAll()
+    } catch (e) {
+      alert('No se pudo restaurar. ' + (e?.response?.data?.error || ''))
+    } finally { setRestaurando(null) }
+  }
+
   const handleNuevoProveedor = (prov) => setProveedores(prev => [...prev, prov])
 
   const empresasUnicas = [...new Set(tickets.map(t => t.empresa).filter(Boolean))].sort()
@@ -446,7 +471,9 @@ export default function BitacoraPage({ rol }) {
 
         {/* Tabs Técnico / Coordinador */}
         <div style={{ display: 'flex', gap: 4, marginBottom: '1.25rem', background: 'white', borderRadius: 10, padding: 4, width: 'fit-content', border: '1px solid #e5e7eb' }}>
-          {[['todos','📋 Todos'],['coordinador','🧑‍💼 Coordinador'],['tecnico','👷 Técnico']].map(([key, label]) => (
+          {[['todos','📋 Todos'],['coordinador','🧑‍💼 Coordinador'],['tecnico','👷 Técnico'],
+            ...(rol === 'admin' || rol === 'coordinador' ? [['papelera','🗑️ Papelera']] : [])
+          ].map(([key, label]) => (
             <button key={key} onClick={() => setTipoFiltro(key)}
               style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer',
                 fontWeight: tipoFiltro === key ? 600 : 400,
@@ -457,7 +484,45 @@ export default function BitacoraPage({ rol }) {
           ))}
         </div>
 
-        {loading ? <div className="loader"><div className="spinner" /></div> : (
+        {tipoFiltro === 'papelera' ? (
+          loadingPapelera ? <div className="loader"><div className="spinner" /></div> : (
+            <div className="card" style={{ padding: 0 }}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ticket</th><th>Empresa</th><th>Fecha</th><th>Estatus</th>
+                      <th>Eliminado por</th><th>Eliminado el</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {papeleraTickets.length === 0 && (
+                      <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>
+                        La papelera está vacía
+                      </td></tr>
+                    )}
+                    {papeleraTickets.map(t => (
+                      <tr key={t.id}>
+                        <td>{t.ticket_id}</td>
+                        <td>{t.empresa}</td>
+                        <td>{t.fecha}</td>
+                        <td><span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span></td>
+                        <td>{t.eliminado_por_nombre || '—'}</td>
+                        <td>{t.eliminado_en ? new Date(t.eliminado_en).toLocaleString('es-MX') : '—'}</td>
+                        <td>
+                          <button className="btn btn-sm btn-ghost" disabled={restaurando === t.id}
+                            onClick={() => restaurarTicket(t.id)}>
+                            {restaurando === t.id ? 'Restaurando...' : '↩️ Restaurar'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        ) : loading ? <div className="loader"><div className="spinner" /></div> : (
           <div className="card" style={{ padding: 0 }}>
             <div className="table-wrap">
               <table>
