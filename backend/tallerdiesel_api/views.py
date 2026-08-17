@@ -552,6 +552,8 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         estatus_anterior = ticket.estatus
         tecnico_anterior_id = ticket.tecnico_id
+        tipo_solicitud_anterior = ticket.tipo_solicitud
+        coordinador_anterior_id = ticket.coordinador_id
         response = super().update(request, *args, **kwargs)
         ticket.refresh_from_db()
 
@@ -594,6 +596,34 @@ class TicketViewSet(viewsets.ModelViewSet):
                 autor_nombre=request.user.nombre_completo,
                 texto=f'Técnico asignado: {ticket.tecnico.nombre}',
             )
+
+        # Si el ticket era "directo con técnico" y, al editarlo, quedó con coordinador
+        # (por el formulario general de Bitácora, no solo por el botón dedicado),
+        # se avisa al cliente igual que en "Tomar como coordinador".
+        tomo_coordinador_por_edicion = (
+            tipo_solicitud_anterior == 'tecnico' and ticket.tipo_solicitud == 'coordinador'
+            and ticket.coordinador_id and ticket.coordinador_id != coordinador_anterior_id
+        )
+        if tomo_coordinador_por_edicion and ticket.cliente_id:
+            Notificacion.objects.create(
+                destinatario=ticket.cliente,
+                titulo='Un coordinador tomó tu servicio',
+                mensaje=f'{ticket.coordinador.nombre_completo} ahora coordina tu ticket {ticket.ticket_id}.',
+                tipo='coordinador_asignado', referencia_id=ticket.id,
+            )
+            if ticket.cliente.email:
+                try:
+                    url = f'{settings.FRONTEND_URL}/cliente/dashboard'
+                    enviar_html(
+                        asunto=f'🧑‍💼 Un coordinador tomó tu servicio — {ticket.ticket_id}',
+                        destinatarios=[ticket.cliente.email],
+                        html_body=email_nuevo_comentario(ticket.coordinador.nombre_completo, 'coordinador', ticket.ticket_id,
+                                                          f'{ticket.coordinador.nombre_completo} tomó tu servicio y ahora le da seguimiento personal.', url),
+                        text_body=f'{ticket.coordinador.nombre_completo} tomó tu servicio {ticket.ticket_id} y ahora le da seguimiento. Ingresa al sistema: {url}',
+                    )
+                except Exception as e:
+                    print(f'⚠️  Error enviando correo de coordinador asignado (edición): {e}')
+
         return response
 
     @action(detail=True, methods=['post'])
