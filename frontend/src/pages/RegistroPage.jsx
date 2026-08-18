@@ -75,7 +75,14 @@ export default function RegistroPage() {
                   <label className="form-label">Nombre(s)</label>
                   <input className="form-input" name="nombre" placeholder="Tu nombre completo" value={form.nombre} onChange={handleChange} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                {/*
+                  FIX: se usa la clase "grid-2" (ya definida en el CSS global)
+                  en vez de un grid en línea fijo a 2 columnas. "grid-2" se
+                  apila a 1 sola columna en pantallas <= 768px (@media query
+                  ya existente), evitando que la etiqueta larga "Apellido
+                  Materno" se rompa en 2 líneas y se encime con el input.
+                */}
+                <div className="grid-2" style={{ gap: '0.75rem' }}>
                   <div className="form-group">
                     <label className="form-label">Apellido Paterno</label>
                     <input className="form-input" name="apellido_paterno" placeholder="Paterno" value={form.apellido_paterno} onChange={handleChange} />
