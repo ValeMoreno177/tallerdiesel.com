@@ -121,19 +121,49 @@ export default function RegistroPage() {
                   </div>
                 )}
 
+                {/*
+                  FIX: el checkbox y el botón "Aviso de Privacidad" ya NO están
+                  dentro del mismo <label>. Antes, tocar el botón en móvil podía
+                  togglear el checkbox sin que el usuario lo notara, dejándolo
+                  desmarcado y por eso el botón "Registrar" (disabled) parecía
+                  "no funcionar" solo en celular.
+
+                  El checkbox sigue siendo visible y clicable normalmente:
+                  se agranda un poco para que sea fácil de tocar en móvil,
+                  y el <label htmlFor="aviso"> permite tocar el texto para
+                  marcarlo, igual que antes — solo el botón interno queda aislado.
+                */}
                 <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 14px' }}>
-                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.82rem', cursor: 'pointer' }}>
-                    <input type="checkbox" name="aceptar_aviso_privacidad" checked={form.aceptar_aviso_privacidad}
-                      onChange={handleChange} style={{ marginTop: 3 }} required />
-                    <span>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.82rem' }}>
+                    <input
+                      type="checkbox"
+                      id="aceptar_aviso_privacidad"
+                      name="aceptar_aviso_privacidad"
+                      checked={form.aceptar_aviso_privacidad}
+                      onChange={handleChange}
+                      required
+                      style={{
+                        marginTop: 3,
+                        width: 18,
+                        height: 18,
+                        minWidth: 18,
+                        cursor: 'pointer',
+                        accentColor: 'var(--azul)'
+                      }}
+                    />
+                    <label htmlFor="aceptar_aviso_privacidad" style={{ cursor: 'pointer' }}>
                       He leído y acepto el{' '}
-                      <button type="button" onClick={() => setMostrarAviso(v => !v)}
-                        style={{ background: 'none', border: 'none', padding: 0, color: 'var(--azul)', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMostrarAviso(v => !v) }}
+                        onTouchEnd={(e) => e.stopPropagation()}
+                        style={{ background: 'none', border: 'none', padding: 0, color: 'var(--azul)', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit' }}
+                      >
                         Aviso de Privacidad
                       </button>
                       .
-                    </span>
-                  </label>
+                    </label>
+                  </div>
                   {mostrarAviso && (
                     <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e5e7eb', fontSize: '0.76rem', color: '#4b5563', lineHeight: 1.6, maxHeight: 160, overflowY: 'auto' }}>
                       <strong>Aviso de Privacidad — Tallerdiesel</strong>
