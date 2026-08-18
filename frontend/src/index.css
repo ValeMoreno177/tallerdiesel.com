@@ -43,6 +43,20 @@ input, textarea, select {
   appearance: none;
   max-width: 100%;
 }
+
+/* FIX: excepción a la regla appearance:none de arriba, específica para
+   checkboxes y radios. Sin esto, quedan completamente invisibles (sin caja,
+   sin borde) en todos los formularios del sitio, en desktop y en móvil. */
+input[type="checkbox"],
+input[type="radio"] {
+  -webkit-appearance: checkbox;
+  appearance: auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--azul);
+  flex-shrink: 0;
+}
+
 button {
   font-family: 'Barlow', sans-serif;
   -webkit-appearance: none;
