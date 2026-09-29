@@ -13,15 +13,14 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
 
   const fmt = n => `$${parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
   const esTerminado = localTicket.estatus === 'terminado'
+  const num = v => parseFloat(v || 0)
+  const totalSalida      = num(localTicket.sal_costo) + num(localTicket.sal_ganancia)
+  const totalRefacciones = num(localTicket.ref_costo) + num(localTicket.ref_ganancia)
+  const totalManoObra    = num(localTicket.mo_costo)  + num(localTicket.mo_ganancia)
   const tienePermisoEdicion = localTicket.puede_editar_coordinador
 
-  // Coordinador puede comentar si admin le dio permiso en este ticket cerrado
-  // Admin siempre puede, cliente puede mientras el ticket no esté finalizado
-  const puedeComentar = !soloLectura && (
-    user?.rol === 'admin' ||
-    (user?.rol === 'coordinador' && (!esTerminado || tienePermisoEdicion)) ||
-    (user?.rol === 'cliente' && !esTerminado)
-  )
+  // Los comentarios NO se bloquean aunque el servicio esté finalizado (coordinador, cliente y admin)
+  const puedeComentar = !soloLectura
   const bloqueado = !puedeComentar
 
   // Admin y Coordinador pueden asignar/cambiar el técnico de un ticket que no esté finalizado.
@@ -61,6 +60,30 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
       setComentario('')
       if (onUpdated) onUpdated()
     } catch { } finally { setEnviando(false) }
+  }
+
+  const [finalizando, setFinalizando] = useState(false)
+  const solicitudPendiente = !!localTicket.finalizacion_solicitada && !esTerminado
+  const puedeSolicitarFinalizar = !soloLectura && !esTerminado && !solicitudPendiente
+    && localTicket.cliente && (user?.rol === 'coordinador' || user?.rol === 'admin')
+  const puedeResponderFinalizar = !soloLectura && solicitudPendiente
+    && user?.rol === 'cliente' && localTicket.cliente === user.id
+
+  const solicitarFinalizacion = async () => {
+    setFinalizando(true)
+    try {
+      const { data } = await api.post(`/tickets/${localTicket.id}/solicitar_finalizacion/`, {})
+      setLocalTicket(data); onUpdated && onUpdated()
+    } catch (e) { alert(e?.response?.data?.error || 'No se pudo enviar la solicitud.') }
+    finally { setFinalizando(false) }
+  }
+  const responderFinalizacion = async (acepta) => {
+    setFinalizando(true)
+    try {
+      const { data } = await api.post(`/tickets/${localTicket.id}/responder_finalizacion/`, { acepta })
+      setLocalTicket(data); onUpdated && onUpdated()
+    } catch (e) { alert(e?.response?.data?.error || 'No se pudo registrar tu respuesta.') }
+    finally { setFinalizando(false) }
   }
 
   const togglePermisoCoordinador = async () => {
@@ -130,7 +153,7 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                 ['Folio', localTicket.ticket_id],
                 ['Empresa', localTicket.empresa],
                 ['Unidad', localTicket.unidad],
-                ['Operador', localTicket.operador || '—'],
+                ['Cliente', localTicket.operador || '—'],
                 ['Lugar', localTicket.lugar || '—'],
                 ['Fecha', localTicket.fecha],
                 ['Coordinador', localTicket.coordinador_nombre || '—'],
@@ -159,11 +182,14 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
             <div>
               <h4 style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem', color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase' }}>Información financiera</h4>
               {[
-                ['Costo Total', fmt(localTicket.costo_total), false],
-                ['Ganancia Total', fmt(localTicket.ganancia_total), false, '#059669'],
-                ['Total', fmt(localTicket.total), true],
+                ['Total de Salida', fmt(totalSalida), false],
+                ['Total de Refacciones', fmt(totalRefacciones), false],
+                ['Total de Mano de obra', fmt(totalManoObra), false],
+                ['Costo Total', fmt(localTicket.costo), false],
+                ['Ganancia Total', fmt(localTicket.ganancia), false, '#059669'],
+                ['Total General', fmt(localTicket.total), true],
                 ['IVA 16%', fmt(localTicket.iva), false, '#d97706'],
-                ['Total Final', fmt(localTicket.total_final), true, '#1e40af'],
+                ['Total Final', fmt(localTicket.total_f), true, '#1e40af'],
                 ['Factura', localTicket.no_factura || '—', false],
                 ['Fecha factura', localTicket.fecha_factura || '—', false],
               ].map(([k, v, bold, color]) => (
@@ -179,6 +205,26 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
               )}
             </div>
           </div>
+
+          {/* Finalización: el coordinador solicita, el cliente decide */}
+          {solicitudPendiente && (
+            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', marginBottom: '1.25rem', fontSize: '0.85rem', color: '#92400e' }}>
+              ⏳ Se solicitó finalizar este servicio. {puedeResponderFinalizar ? '¿Confirmas que ya puede finalizarse?' : 'Esperando la respuesta del cliente.'}
+              {puedeResponderFinalizar && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-primary btn-sm" disabled={finalizando} onClick={() => responderFinalizacion(true)}>✅ Sí, finalizar</button>
+                  <button className="btn btn-ghost btn-sm" disabled={finalizando} onClick={() => responderFinalizacion(false)}>↩️ No, aún no</button>
+                </div>
+              )}
+            </div>
+          )}
+          {puedeSolicitarFinalizar && (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <button className="btn btn-sm btn-ghost" disabled={finalizando} onClick={solicitarFinalizacion}>
+                🏁 {finalizando ? 'Enviando...' : 'Solicitar finalización al cliente'}
+              </button>
+            </div>
+          )}
 
           {/* Descripción */}
           {localTicket.reparacion && (
@@ -225,13 +271,6 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                 <button className="btn btn-primary" onClick={enviarComentario} disabled={enviando || !comentario.trim()}>
                   {enviando ? '...' : 'Enviar'}
                 </button>
-              </div>
-            )}
-            {esTerminado && !tienePermisoEdicion && user?.rol !== 'admin' && (
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 12px', fontSize: '0.8rem', color: '#991b1b' }}>
-                {user?.rol === 'cliente'
-                  ? '🔒 Este servicio está finalizado. Ya no se pueden agregar comentarios.'
-                  : '🔒 Este ticket está finalizado. El Administrador puede habilitarte la edición si lo necesitas.'}
               </div>
             )}
             {esTerminado && tienePermisoEdicion && user?.rol === 'coordinador' && (
