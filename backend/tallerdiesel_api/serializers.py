@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
-                      Notificacion, ComentarioTicket, ConfiguracionEmpresa, UnidadFlotilla)
+                      Notificacion, ComentarioTicket, ConfiguracionEmpresa, UnidadFlotilla,
+                      EvidenciaTicket)
 
 User = get_user_model()
 
@@ -15,8 +16,8 @@ class UsuarioSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'nombre', 'apellido_paterno',
                   'apellido_materno', 'empresa', 'telefono', 'puesto', 'rol',
                   'is_active', 'email_verificado', 'fecha_registro', 'nombre_completo', 'password',
-                  'puede_editar_sistema', 'aviso_privacidad_aceptado']
-        read_only_fields = ['id', 'fecha_registro', 'aviso_privacidad_aceptado']
+                  'puede_editar_sistema', 'aviso_privacidad_aceptado', 'tour_completado']
+        read_only_fields = ['id', 'fecha_registro', 'aviso_privacidad_aceptado', 'tour_completado']
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -98,6 +99,13 @@ class ComentarioTicketSerializer(serializers.ModelSerializer):
         return obj.autor.rol if obj.autor else None
 
 
+class EvidenciaTicketSerializer(serializers.ModelSerializer):
+    # No se expone la URL directa del archivo: se descarga por un endpoint con permisos.
+    class Meta:
+        model = EvidenciaTicket
+        fields = ['id', 'nombre_original', 'subido_por_nombre', 'fecha']
+
+
 class TicketSerializer(serializers.ModelSerializer):
     coordinador_nombre  = serializers.SerializerMethodField()
     proveedor_nombre    = serializers.SerializerMethodField()
@@ -114,6 +122,7 @@ class TicketSerializer(serializers.ModelSerializer):
     total_f  = serializers.ReadOnlyField()
     comision = serializers.ReadOnlyField()
     comentarios = ComentarioTicketSerializer(many=True, read_only=True)
+    evidencias  = EvidenciaTicketSerializer(many=True, read_only=True)
 
     class Meta:
         model = Ticket
