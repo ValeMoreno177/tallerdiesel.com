@@ -20,7 +20,8 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const tienePermisoEdicion = localTicket.puede_editar_coordinador
 
   // Los comentarios NO se bloquean aunque el servicio esté finalizado (coordinador, cliente y admin)
-  const puedeComentar = !soloLectura
+  // (soloLectura solo limita editar/asignar, NO comentar)
+  const puedeComentar = true
   const bloqueado = !puedeComentar
 
   // Admin y Coordinador pueden asignar/cambiar el técnico de un ticket que no esté finalizado.
