@@ -167,6 +167,8 @@ class Ticket(models.Model):
     estatus_factura = models.CharField(max_length=20, choices=EST_FACTURA_CHOICES, blank=True, default='pendiente')
 
     puede_editar_coordinador = models.BooleanField(default=False)
+    # El Coordinador solicita finalizar; el Cliente decide si se finaliza o no.
+    finalizacion_solicitada = models.BooleanField(default=False)
     alerta_sla_enviada = models.BooleanField(default=False)  # evita duplicar alertas de SLA
     tipo_solicitud = models.CharField(
         max_length=20,
