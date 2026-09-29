@@ -33,7 +33,11 @@ function calcular(f) {
   const isr      = total * 0.0125
   const total_f  = neto - isr
   const comision = ganancia * 0.15
-  return { costo, ganancia, total, iva, neto, isr, total_f, comision }
+  // Totales por concepto (costo + ganancia) para Facturación
+  const total_salida = salC + salG
+  const total_mo     = moC + moG
+  const total_ref    = refC + refG
+  return { costo, ganancia, total, iva, neto, isr, total_f, comision, total_salida, total_mo, total_ref }
 }
 
 // ─────────────────────────────────────────────
@@ -195,7 +199,7 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
           <Row label="Tipo de unidad" name="tipo_unidad" placeholder="Tractocamión, Caja seca..." />
           <Row label="Unidad"   name="unidad"   placeholder="Kenworth T680" />
           <Row label="Lugar"    name="lugar"    placeholder="Ciudad, Estado" />
-          <Row label="Operador" name="operador" placeholder="Nombre del operador" />
+          <Row label="Cliente" name="operador" placeholder="Nombre del cliente" />
 
           {/* COORDINADOR */}
           <div className="form-group">
@@ -271,9 +275,12 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
 
           <div style={{ gridColumn: '1/-1', fontSize: '0.72rem', fontWeight: 700, letterSpacing: 2, color: '#9ca3af', marginTop: 8 }}>TOTALES CALCULADOS</div>
 
+          <CalcRow label="Total de Salida"        value={calc.total_salida} />
+          <CalcRow label="Total de Refacciones"   value={calc.total_ref} />
+          <CalcRow label="Total de Mano de obra"  value={calc.total_mo} />
           <CalcRow label="Costo Total"    value={calc.costo} />
           <CalcRow label="Ganancia Total" value={calc.ganancia} highlight />
-          <CalcRow label="Total"          value={calc.total} />
+          <CalcRow label="Total General"  value={calc.total} />
           <CalcRow label="IVA (16%)"      value={calc.iva} highlight />
           <CalcRow label="Neto"           value={calc.neto} />
           <CalcRow label="ISR (1.25%)"    value={calc.isr} highlight />
