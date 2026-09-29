@@ -58,7 +58,7 @@ def generar_pdf_ticket(ticket):
         ['Tipo de unidad', ticket.tipo_unidad or '—'],
         ['Unidad', ticket.unidad or '—'],
         ['Lugar', ticket.lugar or '—'],
-        ['Operador', ticket.operador or '—'],
+        ['Cliente', ticket.operador or '—'],
         ['Técnico asignado', ticket.tecnico.nombre if ticket.tecnico else 'Sin asignar'],
         ['Coordinador', ticket.coordinador.nombre_completo if ticket.coordinador else 'Sin asignar'],
     ]
@@ -185,7 +185,9 @@ class PuedeEditarTicket(BasePermission):
         if obj.cliente_id != request.user.id:
             return False
         # Cliente: solo su propio ticket
-        if view.action in ('update', 'partial_update', 'agregar_comentario', 'asignar_tecnico'):
+        if view.action == 'agregar_comentario':
+            return True  # los comentarios nunca se bloquean, ni con el servicio finalizado
+        if view.action in ('update', 'partial_update', 'asignar_tecnico', 'responder_finalizacion'):
             return obj.estatus != 'terminado'
         if view.action == 'calificar':
             return obj.estatus == 'terminado'
@@ -550,6 +552,13 @@ class TicketViewSet(viewsets.ModelViewSet):
                     status=403)
             kwargs['partial'] = True
 
+        # El Coordinador no cierra el servicio por su cuenta: lo solicita y el Cliente decide.
+        if (request.user.rol == 'coordinador' and ticket.cliente_id
+                and request.data.get('estatus') == 'terminado' and ticket.estatus != 'terminado'):
+            return Response(
+                {'error': 'Para finalizar el servicio usa "Solicitar finalización": el cliente debe confirmarla.'},
+                status=403)
+
         estatus_anterior = ticket.estatus
         tecnico_anterior_id = ticket.tecnico_id
         tipo_solicitud_anterior = ticket.tipo_solicitud
@@ -813,6 +822,67 @@ class TicketViewSet(viewsets.ModelViewSet):
                     )
         except Exception as e:
             print(f'⚠️  Error notificando comentario: {e}')
+
+    @action(detail=True, methods=['post'])
+    def solicitar_finalizacion(self, request, pk=None):
+        """Coordinador/Admin pide al cliente confirmar que el servicio ya puede finalizarse."""
+        ticket = self.get_object()
+        if request.user.rol not in ('coordinador', 'admin'):
+            return Response({'error': 'Solo el coordinador puede solicitar la finalización.'}, status=403)
+        if ticket.estatus == 'terminado':
+            return Response({'error': 'El servicio ya está finalizado.'}, status=400)
+        if not ticket.cliente_id:
+            return Response({'error': 'Este ticket no tiene cliente asignado; finalízalo desde la edición.'}, status=400)
+        ticket.finalizacion_solicitada = True
+        ticket.save(update_fields=['finalizacion_solicitada'])
+        ComentarioTicket.objects.create(
+            ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
+            texto=f'{request.user.nombre_completo} solicitó finalizar el servicio. Esperando confirmación del cliente.',
+            es_cambio_estatus=True,
+        )
+        Notificacion.objects.create(
+            destinatario=ticket.cliente,
+            titulo=f'¿Ya podemos finalizar tu servicio {ticket.ticket_id}?',
+            mensaje='Tu coordinador solicita finalizar el servicio. Entra a tu bitácora y confirma si se finaliza o no.',
+            tipo='finalizacion_solicitada', referencia_id=ticket.id,
+        )
+        return Response(TicketSerializer(ticket).data)
+
+    @action(detail=True, methods=['post'])
+    def responder_finalizacion(self, request, pk=None):
+        """El Cliente decide si el servicio se finaliza (acepta=true) o sigue abierto (acepta=false)."""
+        ticket = self.get_object()
+        if request.user.rol != 'cliente' or ticket.cliente_id != request.user.id:
+            return Response({'error': 'Solo el cliente del servicio puede responder.'}, status=403)
+        if not ticket.finalizacion_solicitada:
+            return Response({'error': 'No hay una solicitud de finalización pendiente.'}, status=400)
+        acepta = request.data.get('acepta') in (True, 'true', 'True', 1, '1')
+        ticket.finalizacion_solicitada = False
+        if acepta:
+            anterior = ticket.estatus
+            ticket.estatus = 'terminado'
+            ticket.save(update_fields=['finalizacion_solicitada', 'estatus'])
+            ComentarioTicket.objects.create(
+                ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
+                texto=f'El cliente confirmó la finalización. Estatus cambiado de "{dict(Ticket.ESTATUS_CHOICES).get(anterior, anterior)}" a "Finalizado"',
+                es_cambio_estatus=True, estatus_anterior=anterior, estatus_nuevo='terminado',
+            )
+            texto_notif = f'{request.user.nombre_completo} confirmó la finalización del ticket {ticket.ticket_id}.'
+        else:
+            ticket.save(update_fields=['finalizacion_solicitada'])
+            ComentarioTicket.objects.create(
+                ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
+                texto='El cliente indicó que el servicio aún NO debe finalizarse.',
+                es_cambio_estatus=True,
+            )
+            texto_notif = f'{request.user.nombre_completo} indicó que el ticket {ticket.ticket_id} aún no debe finalizarse.'
+        if ticket.coordinador_id:
+            Notificacion.objects.create(
+                destinatario=ticket.coordinador,
+                titulo=f'Respuesta de finalización — {ticket.ticket_id}',
+                mensaje=texto_notif, tipo='cambio_estatus', referencia_id=ticket.id,
+            )
+        return Response(TicketSerializer(ticket).data)
 
     @action(detail=True, methods=['post'])
     def calificar(self, request, pk=None):
