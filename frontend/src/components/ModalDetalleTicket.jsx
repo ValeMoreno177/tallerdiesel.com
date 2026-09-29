@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import AsignarTecnicoModal from './AsignarTecnicoModal'
@@ -61,6 +61,43 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
       setComentario('')
       if (onUpdated) onUpdated()
     } catch { } finally { setEnviando(false) }
+  }
+
+  // ── Evidencias del servicio (suben Coordinador/Admin; todos las pueden ver) ──
+  const fileRef = useRef(null)
+  const [subiendoEv, setSubiendoEv] = useState(false)
+  const [errorEv, setErrorEv] = useState('')
+  const puedeSubirEvidencia = user?.rol === 'coordinador' || user?.rol === 'admin'
+  const evidencias = localTicket.evidencias || []
+
+  const subirEvidencias = async (e) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (files.length === 0) return
+    setSubiendoEv(true); setErrorEv('')
+    try {
+      for (const f of files) {
+        const fd = new FormData()
+        fd.append('archivo', f)
+        const { data } = await api.post(`/tickets/${localTicket.id}/subir_evidencia/`, fd)
+        setLocalTicket(data)
+      }
+      onUpdated && onUpdated()
+    } catch (err) {
+      setErrorEv(err?.response?.data?.error || 'No se pudo subir la evidencia.')
+    } finally { setSubiendoEv(false) }
+  }
+
+  const verEvidencia = async (ev) => {
+    try {
+      const res = await api.get(`/tickets/${localTicket.id}/evidencia/${ev.id}/`, { responseType: 'blob' })
+      const url = URL.createObjectURL(res.data)
+      const w = window.open(url, '_blank')
+      if (!w) {
+        const a = document.createElement('a')
+        a.href = url; a.download = ev.nombre_original; a.click()
+      }
+    } catch { alert('No se pudo abrir la evidencia.') }
   }
 
   const [finalizando, setFinalizando] = useState(false)
@@ -235,6 +272,30 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
             </div>
           )}
 
+          {/* Evidencias del servicio */}
+          {(evidencias.length > 0 || puedeSubirEvidencia) && (
+            <div style={{ marginBottom: '1.5rem' }}>
+              <h4 style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.85rem', color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase' }}>
+                Evidencias del servicio
+              </h4>
+              {evidencias.length === 0 ? (
+                <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Sin evidencias aún</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {evidencias.map(ev => (
+                    <div key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: '#f9fafb', border: '1px solid #f3f4f6', borderRadius: 8, padding: '6px 10px', fontSize: '0.85rem' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        📎 {ev.nombre_original}
+                        <span style={{ color: '#9ca3af', fontSize: '0.72rem', marginLeft: 8 }}>{ev.subido_por_nombre} · {formatFecha(ev.fecha)}</span>
+                      </span>
+                      <button className="btn btn-sm btn-ghost" onClick={() => verEvidencia(ev)}>Ver</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Historial / Comentarios */}
           <div>
             <h4 style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem', color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase' }}>
@@ -267,10 +328,28 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                   value={comentario} onChange={e => setComentario(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && enviarComentario()}
                   style={{ flex: 1 }} />
+                {puedeSubirEvidencia && (
+                  <>
+                    <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf"
+                      style={{ display: 'none' }} onChange={subirEvidencias} />
+                    <button className="btn btn-ghost" type="button" title="Subir evidencia del servicio (si el cliente la solicita)"
+                      onClick={() => fileRef.current?.click()} disabled={subiendoEv}>
+                      {subiendoEv ? 'Subiendo...' : '📎 Evidencia'}
+                    </button>
+                  </>
+                )}
                 <button className="btn btn-primary" onClick={enviarComentario} disabled={enviando || !comentario.trim()}>
                   {enviando ? '...' : 'Enviar'}
                 </button>
               </div>
+            )}
+            {puedeSubirEvidencia && (
+              <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 6 }}>
+                📎 Adjunta la evidencia del servicio si el cliente la pide (JPG, PNG, WEBP o PDF · máx. 10 MB).
+              </div>
+            )}
+            {errorEv && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 8, padding: '6px 10px', fontSize: '0.8rem', marginTop: 6 }}>{errorEv}</div>
             )}
             {esTerminado && tienePermisoEdicion && user?.rol === 'coordinador' && (
               <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '8px 12px', fontSize: '0.8rem', color: '#065f46', marginTop: 6 }}>
