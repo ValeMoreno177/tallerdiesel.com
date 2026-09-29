@@ -96,8 +96,8 @@ export default function LoginPage() {
                 </div>
               )}
               <div className="form-group">
-                <label className="form-label">Usuario o Correo electrónico *</label>
-                <input className="form-input" placeholder="tucorreo@empresa.com"
+                <label className="form-label">Usuario *</label>
+                <input className="form-input" placeholder="Tu nombre de usuario"
                   value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} required />
               </div>
               <div className="form-group">
