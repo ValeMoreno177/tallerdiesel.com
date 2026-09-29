@@ -1,6 +1,7 @@
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useState, useEffect } from "react";
+import { getMenuItems } from "../utils/menuItems";
 
 const LOGO = () => (
   <div
@@ -27,7 +28,7 @@ const LOGO = () => (
 );
 
 export default function Sidebar() {
-  const { user, logout } = useAuth();
+  const { user, logout, iniciarTour } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -48,47 +49,7 @@ export default function Sidebar() {
     navigate("/login");
   };
 
-  const getItems = () => {
-    // ADMIN
-    if (user?.rol === "admin")
-      return [
-        { to: "/admin/dashboard", label: "Dashboard", icon: "▦" },
-        { to: "/admin/bitacora", label: "Bitácora", icon: "☰" },
-        { to: "/admin/usuarios", label: "Usuarios", icon: "👥" },
-        { to: "/mapa-tecnicos", label: "Mapa de Técnicos", icon: "🗺️" },
-        { to: "/admin/configuracion", label: "Configuración", icon: "⚙" },
-      ];
-
-    // COORDINADOR
-    if (user?.rol === "coordinador")
-      return [
-        { to: "/coordinador/dashboard", label: "Dashboard", icon: "▦" },
-        { to: "/coordinador/bitacora", label: "Bitácora", icon: "☰" },
-
-        ...(user?.puede_editar_sistema
-          ? [
-              {
-                to: "/coordinador/usuarios",
-                label: "Usuarios",
-                icon: "👥",
-              },
-            ]
-          : []),
-
-        { to: "/mapa-tecnicos", label: "Mapa de Técnicos", icon: "🗺️" },
-        { to: "/admin/configuracion", label: "Configuración", icon: "⚙" },
-      ];
-
-    // CLIENTE
-    return [
-      { to: '/cliente/dashboard',        label: 'Inicio',                  icon: '🏠' },
-      { to: '/solicitar-servicio',       label: 'Solicitar a Coordinador', icon: '📍' },
-      { to: '/solicitar-tecnico',        label: 'Solicitar a Técnico',     icon: '🔧' },
-      { to: '/cliente/bitacora',         label: 'Bitácora',                icon: '🧑‍💼' },
-    ];
-  };
-
-  const items = getItems();
+  const items = getMenuItems(user);
 
   return (
     <>
@@ -161,6 +122,7 @@ export default function Sidebar() {
             <NavLink
               key={item.to}
               to={item.to}
+              data-tour={item.to}
               end
               className={({ isActive }) =>
                 isActive ? "active" : ""
@@ -173,6 +135,9 @@ export default function Sidebar() {
         </nav>
 
         <div className="sidebar-bottom">
+          <button data-tour="tutorial" onClick={iniciarTour} style={{ marginBottom: 6 }}>
+            ❓ Ver tutorial
+          </button>
           <button onClick={handleLogout}>
             🚪 Cerrar sesión
           </button>
