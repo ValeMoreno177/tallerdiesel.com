@@ -6,6 +6,7 @@ const AuthContext = createContext(null)
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [tourForzado, setTourForzado] = useState(false)  // "Ver tutorial" desde el menú
 
   useEffect(() => {
     const token = localStorage.getItem('access_token')
@@ -44,8 +45,19 @@ export function AuthProvider({ children }) {
     setUser(null)
   }
 
+  const iniciarTour = () => setTourForzado(true)
+
+  // Al terminar u omitir el recorrido se guarda en el servidor para no volver a mostrarlo.
+  const terminarTour = async () => {
+    setTourForzado(false)
+    if (user && user.tour_completado === false) {
+      setUser(u => ({ ...u, tour_completado: true }))
+      try { await api.post('/auth/tour-completado/') } catch { /* si falla, se reintenta en el próximo inicio */ }
+    }
+  }
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, registro, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, registro, loading, tourForzado, iniciarTour, terminarTour }}>
       {children}
     </AuthContext.Provider>
   )
