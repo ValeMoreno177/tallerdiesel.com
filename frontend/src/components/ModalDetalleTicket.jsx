@@ -185,8 +185,6 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                 ['Total de Salida', fmt(totalSalida), false],
                 ['Total de Refacciones', fmt(totalRefacciones), false],
                 ['Total de Mano de obra', fmt(totalManoObra), false],
-                ['Costo Total', fmt(localTicket.costo), false],
-                ['Ganancia Total', fmt(localTicket.ganancia), false, '#059669'],
                 ['Total General', fmt(localTicket.total), true],
                 ['IVA 16%', fmt(localTicket.iva), false, '#d97706'],
                 ['Total Final', fmt(localTicket.total_f), true, '#1e40af'],
