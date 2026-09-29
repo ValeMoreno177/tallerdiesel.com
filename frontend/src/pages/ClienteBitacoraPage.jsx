@@ -42,6 +42,17 @@ function TicketCard({ t, onUpdated }) {
   const [error, setError] = useState('')
   const [comentario, setComentario] = useState('')
   const [enviandoComentario, setEnviandoComentario] = useState(false)
+  const [respondiendo, setRespondiendo] = useState(false)
+  const solicitudPendiente = !!t.finalizacion_solicitada && !finalizado
+
+  const responderFinalizacion = async (acepta) => {
+    setRespondiendo(true)
+    try {
+      await api.post(`/tickets/${t.id}/responder_finalizacion/`, { acepta })
+      onUpdated()
+    } catch (e) { setError(e.response?.data?.error || 'No se pudo registrar tu respuesta.') }
+    finally { setRespondiendo(false) }
+  }
 
   const formatFecha = f => {
     if (!f) return '—'
@@ -102,6 +113,16 @@ function TicketCard({ t, onUpdated }) {
         <span>📅 {t.fecha}</span>
       </div>
 
+      {solicitudPendiente && (
+        <div style={{ marginTop: 12, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: '0.85rem', color: '#92400e' }}>
+          ⏳ Tu coordinador solicita finalizar este servicio. ¿Ya puede finalizarse?
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="btn btn-primary btn-sm" disabled={respondiendo} onClick={() => responderFinalizacion(true)}>✅ Sí, finalizar</button>
+            <button className="btn btn-ghost btn-sm" disabled={respondiendo} onClick={() => responderFinalizacion(false)}>↩️ No, aún no</button>
+          </div>
+        </div>
+      )}
+
       {editando && (
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px dashed #e5e7eb', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {error && <div style={{ background: '#fef2f2', color: '#991b1b', padding: '6px 10px', borderRadius: 6, fontSize: '0.8rem' }}>{error}</div>}
@@ -140,20 +161,14 @@ function TicketCard({ t, onUpdated }) {
         </div>
       )}
 
-      {!finalizado ? (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6', display: 'flex', gap: 8 }}>
-          <input className="form-input" placeholder="Escribe un comentario para tu coordinador..."
-            value={comentario} onChange={e => setComentario(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && enviarComentario()} style={{ flex: 1 }} />
-          <button className="btn btn-primary btn-sm" disabled={enviandoComentario || !comentario.trim()} onClick={enviarComentario}>
-            {enviandoComentario ? '...' : '📨 Enviar'}
-          </button>
-        </div>
-      ) : (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6', fontSize: '0.8rem', color: '#9ca3af', textAlign: 'center' }}>
-          🔒 Servicio finalizado — ya no se pueden agregar comentarios ni editar este ticket.
-        </div>
-      )}
+      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6', display: 'flex', gap: 8 }}>
+        <input className="form-input" placeholder="Escribe un comentario para tu coordinador..."
+          value={comentario} onChange={e => setComentario(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && enviarComentario()} style={{ flex: 1 }} />
+        <button className="btn btn-primary btn-sm" disabled={enviandoComentario || !comentario.trim()} onClick={enviarComentario}>
+          {enviandoComentario ? '...' : '📨 Enviar'}
+        </button>
+      </div>
     </div>
   )
 }
