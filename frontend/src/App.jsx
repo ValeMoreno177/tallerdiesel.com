@@ -19,6 +19,7 @@ import Creditopage from "./pages/Creditopage";
 import ClienteBitacoraPage from "./pages/ClienteBitacoraPage";
 import UsuariosPage from "./pages/UsuariosPage";
 import ConfiguracionPage from "./pages/ConfiguracionPage";
+import TourGuia from "./components/TourGuia";
 
 function RutaProtegida({ children, roles, requierePermisoEdicion }) {
   const { user, loading } = useAuth();
@@ -210,6 +211,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+        <TourGuia />
       </BrowserRouter>
     </AuthProvider>
   );
