@@ -45,7 +45,7 @@ export default function RegistroPage() {
       {/* Fondo */}
       <div style={{
         position: 'fixed', inset: 0, zIndex: 0,
-        background: 'linear-gradient(135deg, rgba(13,13,13,0.88) 0%, rgba(26,86,219,0.25) 100%), url(https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=1600&q=80) center/cover no-repeat',
+        background: 'linear-gradient(135deg, rgba(13,13,13,0.85) 0%, rgba(26,86,219,0.3) 100%), url(https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?w=1600&q=80) center/cover no-repeat',
       }} />
 
       {/* Navbar */}
