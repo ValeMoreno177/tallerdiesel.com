@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import axios from 'axios'
@@ -56,6 +56,16 @@ export default function SolicitarTecnicoPage() {
     try { return JSON.parse(localStorage.getItem('td_tecnico_elegido') || 'null') } catch { return null }
   })
   const [confirmando, setConfirmando] = useState(null)
+  const mapaRef = useRef(null)
+
+  // Al enviar la solicitud, baja solo hasta el mapa de técnicos
+  useEffect(() => {
+    if (!enviado) return
+    const t = setTimeout(() => {
+      mapaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 250)
+    return () => clearTimeout(t)
+  }, [enviado])
 
   useEffect(() => {
     try {
@@ -195,7 +205,7 @@ export default function SolicitarTecnicoPage() {
 
         {/* ── MAPA — solo aparece después de enviar el formulario ── */}
         {enviado && (
-        <div style={{ width: '100%', maxWidth: 900, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div ref={mapaRef} style={{ width: '100%', maxWidth: 900, display: 'flex', flexDirection: 'column', alignItems: 'center', scrollMarginTop: 16 }}>
           <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
             <h2 style={{ fontFamily: 'Bebas Neue', fontSize: 'clamp(1.5rem, 3vw, 2.5rem)', color: 'white', letterSpacing: 2, margin: 0 }}>
               TÉCNICOS DISPONIBLES CERCA DE TI
