@@ -3,6 +3,7 @@ import Sidebar from '../components/Sidebar'
 import Toast from '../components/Toast'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import EvidenciaBurbuja from '../components/EvidenciaBurbuja'
 
 const PASOS = ['pendiente', 'atendido', 'proceso', 'terminado']
 const ETIQUETAS = { pendiente: 'Pendiente', atendido: 'En camino', proceso: 'Reparando', terminado: 'Finalizado' }
@@ -48,6 +49,13 @@ function TicketCard({ t, onUpdated }) {
   const [editandoId, setEditandoId] = useState(null)
   const [textoEdit, setTextoEdit] = useState('')
   const esMio = c => c.autor === user?.id && !c.es_cambio_estatus
+  const evidenciaDe = c => {
+    if (c.es_cambio_estatus) return null
+    const evs = t.evidencias || []
+    if (c.evidencia) return evs.find(e => e.id === c.evidencia) || null
+    const m = String(c.texto).match(/^📎 Evidencia del servicio subida: (.+)$/)
+    return m ? ([...evs].reverse().find(e => e.nombre_original === m[1]) || null) : null
+  }
 
   const guardarEdicion = async () => {
     if (!textoEdit.trim()) return
@@ -196,7 +204,9 @@ function TicketCard({ t, onUpdated }) {
           {t.comentarios.map(c => (
             <div key={c.id} style={{ fontSize: '0.8rem', color: '#6b7280' }}>
               <strong style={{ color: '#374151' }}>{formatFecha(c.fecha)}</strong> —{' '}
-              {editandoId === c.id ? (
+              {evidenciaDe(c) ? (
+                <div style={{ marginTop: 4 }}><EvidenciaBurbuja ticketId={t.id} evidencia={evidenciaDe(c)} /></div>
+              ) : editandoId === c.id ? (
                 <span style={{ display: 'inline-flex', gap: 6, width: '80%', verticalAlign: 'middle' }}>
                   <input className="form-input" value={textoEdit} autoFocus style={{ flex: 1 }}
                     onChange={e => setTextoEdit(e.target.value)}
