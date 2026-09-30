@@ -254,6 +254,7 @@ class ComentarioTicket(models.Model):
     texto           = models.TextField()
     es_cambio_estatus = models.BooleanField(default=False)
     editado         = models.BooleanField(default=False)  # el autor modificó el texto después de enviarlo
+    evidencia       = models.ForeignKey('EvidenciaTicket', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')  # foto/PDF que muestra este comentario
     estatus_anterior  = models.CharField(max_length=50, blank=True)
     estatus_nuevo     = models.CharField(max_length=50, blank=True)
     fecha           = models.DateTimeField(auto_now_add=True)
