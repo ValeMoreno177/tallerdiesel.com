@@ -870,22 +870,30 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Formato no permitido. Usa JPG, PNG, WEBP o PDF.'}, status=400)
         if archivo.size > self.MAX_EVIDENCIA_MB * 1024 * 1024:
             return Response({'error': f'El archivo pesa más de {self.MAX_EVIDENCIA_MB} MB.'}, status=400)
-        ev = EvidenciaTicket.objects.create(
-            ticket=ticket, archivo=archivo, nombre_original=archivo.name[:255],
-            subido_por=request.user, subido_por_nombre=request.user.nombre_completo,
-        )
-        ComentarioTicket.objects.create(
-            ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-            texto=f'📎 Evidencia del servicio subida: {ev.nombre_original}',
-        )
-        if ticket.cliente_id:
-            Notificacion.objects.create(
-                destinatario=ticket.cliente,
-                titulo=f'Nueva evidencia en tu servicio {ticket.ticket_id}',
-                mensaje=f'{request.user.nombre_completo} subió una evidencia: {ev.nombre_original}',
-                tipo='comentario', referencia_id=ticket.id,
+        try:
+            ev = EvidenciaTicket.objects.create(
+                ticket=ticket, archivo=archivo, nombre_original=archivo.name[:255],
+                subido_por=request.user, subido_por_nombre=request.user.nombre_completo,
             )
-        return Response(TicketSerializer(ticket).data, status=201)
+            ComentarioTicket.objects.create(
+                ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
+                texto=f'📎 Evidencia del servicio subida: {ev.nombre_original}',
+            )
+            if ticket.cliente_id:
+                Notificacion.objects.create(
+                    destinatario=ticket.cliente,
+                    titulo=f'Nueva evidencia en tu servicio {ticket.ticket_id}',
+                    mensaje=f'{request.user.nombre_completo} subió una evidencia: {ev.nombre_original}',
+                    tipo='comentario', referencia_id=ticket.id,
+                )
+            return Response(TicketSerializer(ticket).data, status=201)
+        except Exception as exc:
+            # Django no imprime el traceback en producción (DEBUG=False): lo mandamos al log
+            # de Railway y devolvemos el motivo para poder diagnosticarlo desde la pantalla.
+            import logging, traceback
+            logging.getLogger(__name__).error('Error en subir_evidencia:\n%s', traceback.format_exc())
+            print('ERROR subir_evidencia:', traceback.format_exc(), flush=True)
+            return Response({'error': f'{type(exc).__name__}: {exc}'[:300]}, status=500)
 
     @action(detail=True, methods=['get'], url_path=r'evidencia/(?P<eid>\d+)')
     def evidencia_archivo(self, request, pk=None, eid=None):
