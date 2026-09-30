@@ -878,6 +878,7 @@ class TicketViewSet(viewsets.ModelViewSet):
             ComentarioTicket.objects.create(
                 ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
                 texto=f'📎 Evidencia del servicio subida: {ev.nombre_original}',
+                evidencia=ev,
             )
             if ticket.cliente_id:
                 Notificacion.objects.create(
