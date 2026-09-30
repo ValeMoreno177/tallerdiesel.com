@@ -84,7 +84,11 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
       }
       onUpdated && onUpdated()
     } catch (err) {
-      setErrorEv(err?.response?.data?.error || 'No se pudo subir la evidencia.')
+      const r = err?.response
+      const detalle = r?.data?.error || r?.data?.detail || (r?.data?.archivo && String(r.data.archivo))
+      setErrorEv(detalle
+        ? `No se pudo subir la evidencia: ${detalle}`
+        : `No se pudo subir la evidencia (${r ? 'error ' + r.status : 'sin conexión con el servidor'}).`)
     } finally { setSubiendoEv(false) }
   }
 
