@@ -100,6 +100,24 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
     } catch { alert('No se pudo abrir la evidencia.') }
   }
 
+  // ── Editar mis propios comentarios ──
+  const [editandoId, setEditandoId] = useState(null)
+  const [textoEdit, setTextoEdit] = useState('')
+  const [guardandoEdit, setGuardandoEdit] = useState(false)
+  const esMio = c => c.autor === user?.id && !c.es_cambio_estatus && !String(c.texto).startsWith('📎')
+
+  const guardarEdicion = async () => {
+    if (!textoEdit.trim()) return
+    setGuardandoEdit(true)
+    try {
+      const { data } = await api.post(`/tickets/${localTicket.id}/editar_comentario/`, { comentario_id: editandoId, texto: textoEdit })
+      setLocalTicket(t => ({ ...t, comentarios: (t.comentarios || []).map(c => c.id === data.id ? data : c) }))
+      setEditandoId(null)
+      onUpdated && onUpdated()
+    } catch (e) { alert(e?.response?.data?.error || 'No se pudo editar el comentario.') }
+    finally { setGuardandoEdit(false) }
+  }
+
   const [finalizando, setFinalizando] = useState(false)
   const solicitudPendiente = !!localTicket.finalizacion_solicitada && !esTerminado
   const puedeSolicitarFinalizar = !soloLectura && !esTerminado && !solicitudPendiente
@@ -317,7 +335,24 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                     </span>
                     <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{formatFecha(c.fecha)}</span>
                   </div>
-                  <div style={{ fontSize: '0.85rem', color: '#374151' }}>{c.texto}</div>
+                  {editandoId === c.id ? (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                      <input className="form-input" value={textoEdit} autoFocus style={{ flex: 1 }}
+                        onChange={e => setTextoEdit(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') guardarEdicion(); if (e.key === 'Escape') setEditandoId(null) }} />
+                      <button className="btn btn-primary btn-sm" onClick={guardarEdicion} disabled={guardandoEdit || !textoEdit.trim()}>Guardar</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setEditandoId(null)}>Cancelar</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.85rem', color: '#374151' }}>
+                      {c.texto}
+                      {c.editado && <span style={{ fontSize: '0.7rem', color: '#9ca3af', marginLeft: 6 }}>(editado)</span>}
+                      {esMio(c) && (
+                        <button title="Editar mi comentario" onClick={() => { setEditandoId(c.id); setTextoEdit(c.texto) }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', marginLeft: 6, color: '#6b7280' }}>✏️</button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
