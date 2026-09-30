@@ -17,6 +17,7 @@ urlpatterns = [
     path('auth/refresh/',                   TokenRefreshView.as_view()),
     path('auth/logout/',                    views.logout_view),
     path('auth/me/',                        views.me_view),
+    path('auth/tour-completado/',           views.tour_completado_view),
     path('auth/verificar/',                 views.verificar_email),
     path('auth/reenviar-verificacion/',     views.reenviar_verificacion),
     path('auth/recuperar/',                 views.solicitar_recuperacion),
