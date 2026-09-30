@@ -41,6 +41,8 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     # información del sistema (empleados, catálogos, datos generales).
     puede_editar_sistema      = models.BooleanField(default=False)
     aviso_privacidad_aceptado = models.BooleanField(default=False)
+    # Recorrido guiado de bienvenida: False = usuario nuevo que aún no lo ve/omite.
+    tour_completado           = models.BooleanField(default=False)
 
     objects = UsuarioManager()
     USERNAME_FIELD  = 'username'
@@ -251,9 +253,30 @@ class ComentarioTicket(models.Model):
     autor_nombre    = models.CharField(max_length=200, blank=True)
     texto           = models.TextField()
     es_cambio_estatus = models.BooleanField(default=False)
+    editado         = models.BooleanField(default=False)  # el autor modificó el texto después de enviarlo
     estatus_anterior  = models.CharField(max_length=50, blank=True)
     estatus_nuevo     = models.CharField(max_length=50, blank=True)
     fecha           = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['fecha']
+
+
+def ruta_evidencia(instance, filename):
+    import os
+    ext = os.path.splitext(filename)[1].lower()
+    return f'evidencias/ticket_{instance.ticket_id}/{uuid.uuid4().hex}{ext}'
+
+
+class EvidenciaTicket(models.Model):
+    """Foto / PDF que el Coordinador o Admin sube como evidencia del servicio
+    (normalmente cuando el cliente la solicita)."""
+    ticket           = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='evidencias')
+    archivo          = models.FileField(upload_to=ruta_evidencia)
+    nombre_original  = models.CharField(max_length=255)
+    subido_por       = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True)
+    subido_por_nombre = models.CharField(max_length=200, blank=True)
+    fecha            = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['fecha']
