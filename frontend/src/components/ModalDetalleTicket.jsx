@@ -100,18 +100,6 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
     } finally { setSubiendoEv(false) }
   }
 
-  const verEvidencia = async (ev) => {
-    try {
-      const res = await api.get(`/tickets/${localTicket.id}/evidencia/${ev.id}/`, { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data)
-      const w = window.open(url, '_blank')
-      if (!w) {
-        const a = document.createElement('a')
-        a.href = url; a.download = ev.nombre_original; a.click()
-      }
-    } catch { alert('No se pudo abrir la evidencia.') }
-  }
-
   // ── Editar mis propios comentarios ──
   const [editandoId, setEditandoId] = useState(null)
   const [textoEdit, setTextoEdit] = useState('')
@@ -299,30 +287,6 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
               <div style={{ background: '#f9fafb', borderRadius: 8, padding: '0.875rem', fontSize: '0.875rem', lineHeight: 1.6, color: '#374151' }}>
                 {localTicket.reparacion}
               </div>
-            </div>
-          )}
-
-          {/* Evidencias del servicio */}
-          {(evidencias.length > 0 || puedeSubirEvidencia) && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <h4 style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.85rem', color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase' }}>
-                Evidencias del servicio
-              </h4>
-              {evidencias.length === 0 ? (
-                <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Sin evidencias aún</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {evidencias.map(ev => (
-                    <div key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: '#f9fafb', border: '1px solid #f3f4f6', borderRadius: 8, padding: '6px 10px', fontSize: '0.85rem' }}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        📎 {ev.nombre_original}
-                        <span style={{ color: '#9ca3af', fontSize: '0.72rem', marginLeft: 8 }}>{ev.subido_por_nombre} · {formatFecha(ev.fecha)}</span>
-                      </span>
-                      <button className="btn btn-sm btn-ghost" onClick={() => verEvidencia(ev)}>Ver</button>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
