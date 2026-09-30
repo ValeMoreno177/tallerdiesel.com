@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import api from '../api/client'
+import EvidenciaBurbuja from './EvidenciaBurbuja'
 import { useAuth } from '../context/AuthContext'
 import AsignarTecnicoModal from './AsignarTecnicoModal'
 
@@ -69,6 +70,13 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const [errorEv, setErrorEv] = useState('')
   const puedeSubirEvidencia = user?.rol === 'coordinador' || user?.rol === 'admin'
   const evidencias = localTicket.evidencias || []
+  // Comentario que corresponde a una evidencia subida (los antiguos se buscan por nombre de archivo)
+  const evidenciaDe = c => {
+    if (c.es_cambio_estatus) return null
+    if (c.evidencia) return evidencias.find(e => e.id === c.evidencia) || null
+    const m = String(c.texto).match(/^📎 Evidencia del servicio subida: (.+)$/)
+    return m ? ([...evidencias].reverse().find(e => e.nombre_original === m[1]) || null) : null
+  }
 
   const subirEvidencias = async (e) => {
     const files = Array.from(e.target.files || [])
@@ -339,7 +347,9 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                     </span>
                     <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{formatFecha(c.fecha)}</span>
                   </div>
-                  {editandoId === c.id ? (
+                  {evidenciaDe(c) ? (
+                    <EvidenciaBurbuja ticketId={localTicket.id} evidencia={evidenciaDe(c)} />
+                  ) : editandoId === c.id ? (
                     <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
                       <input className="form-input" value={textoEdit} autoFocus style={{ flex: 1 }}
                         onChange={e => setTextoEdit(e.target.value)}
