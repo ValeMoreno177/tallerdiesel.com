@@ -66,17 +66,6 @@ function TicketCard({ t, onUpdated }) {
     } catch (e) { setError(e.response?.data?.error || 'No se pudo editar el comentario.') }
   }
 
-  const verEvidencia = async (ev) => {
-    try {
-      const res = await api.get(`/tickets/${t.id}/evidencia/${ev.id}/`, { responseType: 'blob' })
-      const url = URL.createObjectURL(res.data)
-      const w = window.open(url, '_blank')
-      if (!w) {
-        const a = document.createElement('a')
-        a.href = url; a.download = ev.nombre_original; a.click()
-      }
-    } catch { setError('No se pudo abrir la evidencia.') }
-  }
   const solicitudPendiente = !!t.finalizacion_solicitada && !finalizado
 
   const responderFinalizacion = async (acepta) => {
@@ -182,20 +171,6 @@ function TicketCard({ t, onUpdated }) {
       {t.reparacion && !editando && (
         <div style={{ marginTop: 10, fontSize: '0.85rem', color: '#4b5563' }}>
           <strong style={{ color: '#374151' }}>Descripción:</strong> {t.reparacion}
-        </div>
-      )}
-
-      {t.evidencias?.length > 0 && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#374151', marginBottom: 6 }}>📎 Evidencias del servicio</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {t.evidencias.map(ev => (
-              <div key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: '0.8rem', color: '#6b7280' }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.nombre_original} · {formatFecha(ev.fecha)}</span>
-                <button className="btn btn-sm btn-ghost" onClick={() => verEvidencia(ev)}>Ver</button>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 
