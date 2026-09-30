@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Sidebar from '../components/Sidebar'
 import Toast from '../components/Toast'
 import api from '../api/client'
+import { useAuth } from '../context/AuthContext'
 
 const PASOS = ['pendiente', 'atendido', 'proceso', 'terminado']
 const ETIQUETAS = { pendiente: 'Pendiente', atendido: 'En camino', proceso: 'Reparando', terminado: 'Finalizado' }
@@ -35,6 +36,7 @@ function PasosTicket({ estatus }) {
 }
 
 function TicketCard({ t, onUpdated }) {
+  const { user } = useAuth()
   const finalizado = t.estatus === 'terminado'
   const [editando, setEditando] = useState(false)
   const [form, setForm] = useState({ tipo_unidad: t.tipo_unidad || '', unidad: t.unidad || '', reparacion: t.reparacion || '' })
@@ -43,6 +45,18 @@ function TicketCard({ t, onUpdated }) {
   const [comentario, setComentario] = useState('')
   const [enviandoComentario, setEnviandoComentario] = useState(false)
   const [respondiendo, setRespondiendo] = useState(false)
+  const [editandoId, setEditandoId] = useState(null)
+  const [textoEdit, setTextoEdit] = useState('')
+  const esMio = c => c.autor === user?.id && !c.es_cambio_estatus
+
+  const guardarEdicion = async () => {
+    if (!textoEdit.trim()) return
+    try {
+      await api.post(`/tickets/${t.id}/editar_comentario/`, { comentario_id: editandoId, texto: textoEdit })
+      setEditandoId(null)
+      onUpdated()
+    } catch (e) { setError(e.response?.data?.error || 'No se pudo editar el comentario.') }
+  }
 
   const verEvidencia = async (ev) => {
     try {
@@ -181,7 +195,25 @@ function TicketCard({ t, onUpdated }) {
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6', display: 'flex', flexDirection: 'column', gap: 6 }}>
           {t.comentarios.map(c => (
             <div key={c.id} style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-              <strong style={{ color: '#374151' }}>{formatFecha(c.fecha)}</strong> — {c.texto}
+              <strong style={{ color: '#374151' }}>{formatFecha(c.fecha)}</strong> —{' '}
+              {editandoId === c.id ? (
+                <span style={{ display: 'inline-flex', gap: 6, width: '80%', verticalAlign: 'middle' }}>
+                  <input className="form-input" value={textoEdit} autoFocus style={{ flex: 1 }}
+                    onChange={e => setTextoEdit(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') guardarEdicion(); if (e.key === 'Escape') setEditandoId(null) }} />
+                  <button className="btn btn-primary btn-sm" onClick={guardarEdicion} disabled={!textoEdit.trim()}>Guardar</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditandoId(null)}>Cancelar</button>
+                </span>
+              ) : (
+                <>
+                  {c.texto}
+                  {c.editado && <span style={{ fontSize: '0.7rem', color: '#9ca3af', marginLeft: 6 }}>(editado)</span>}
+                  {esMio(c) && (
+                    <button title="Editar mi comentario" onClick={() => { setEditandoId(c.id); setTextoEdit(c.texto) }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', marginLeft: 6, color: '#6b7280' }}>✏️</button>
+                  )}
+                </>
+              )}
             </div>
           ))}
         </div>
