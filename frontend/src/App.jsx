@@ -20,6 +20,9 @@ import ClienteBitacoraPage from "./pages/ClienteBitacoraPage";
 import UsuariosPage from "./pages/UsuariosPage";
 import ConfiguracionPage from "./pages/ConfiguracionPage";
 import TourGuia from "./components/TourGuia";
+import SesionInactividad from "./components/SesionInactividad";
+import CalificacionGlobal from "./components/CalificacionGlobal";
+import { NotificacionesProvider } from "./context/NotificacionesContext";
 
 function RutaProtegida({ children, roles, requierePermisoEdicion }) {
   const { user, loading } = useAuth();
@@ -59,6 +62,7 @@ function RutaDashboard() {
 export default function App() {
   return (
     <AuthProvider>
+      <NotificacionesProvider>
       <BrowserRouter
         future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
       >
@@ -212,7 +216,11 @@ export default function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
         <TourGuia />
+        {/* Globales: cierre por inactividad (5 min) y ventana para calificar al terminar un servicio */}
+        <SesionInactividad />
+        <CalificacionGlobal />
       </BrowserRouter>
+      </NotificacionesProvider>
     </AuthProvider>
   );
 }
