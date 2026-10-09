@@ -5,6 +5,7 @@ import ModalDetalleTicket from '../components/ModalDetalleTicket'
 import api from '../api/client'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import { useAuth } from '../context/AuthContext'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 
 const PASOS = ['pendiente','atendido','proceso','terminado']
 const LABELS = { pendiente:'Pendiente', atendido:'En camino', proceso:'Reparando', terminado:'Finalizado' }
@@ -32,16 +33,15 @@ export default function DashboardCliente() {
   })
   const [disponibilidadActual, setDisponibilidadActual] = useState(null)
 
-  const fetchData = () => {
+  const fetchData = () =>
     api.get('/tickets/dashboard_cliente/')
       .then(({ data }) => setData(data))
       .finally(() => setLoading(false))
-  }
 
   // Recargar disponibilidad del técnico elegido en tiempo real
   const fetchDisponibilidad = () => {
-    if (!tecnicoElegido?.id) return
-    api.get(`/tecnicos/${tecnicoElegido.id}/`)
+    if (!tecnicoElegido?.id) return Promise.resolve()
+    return api.get(`/tecnicos/${tecnicoElegido.id}/`)
       .then(({ data }) => setDisponibilidadActual(data.disponible))
       .catch(() => {})
   }
@@ -50,11 +50,11 @@ export default function DashboardCliente() {
     fetchData()
   }, [])
 
-  useEffect(() => {
-    fetchDisponibilidad()
-    const interval = setInterval(fetchDisponibilidad, 30000)
-    return () => clearInterval(interval)
-  }, [tecnicoElegido?.id])
+  useEffect(() => { fetchDisponibilidad() }, [tecnicoElegido?.id])
+
+  // Actualización automática cada 30 s (servicios, estatus y disponibilidad del técnico)
+  useAutoRefresh(fetchData, { soloVisible: true })
+  useAutoRefresh(fetchDisponibilidad, { activo: !!tecnicoElegido?.id, soloVisible: true })
 
   const todosLosServicios = data?.recientes || []
 

@@ -35,7 +35,7 @@ class TecnicoAdmin(admin.ModelAdmin):
 
 @admin.register(Opinion)
 class OpinionAdmin(admin.ModelAdmin):
-    list_display = ['tecnico', 'nombre_autor', 'calificacion', 'fecha']
+    list_display = ['tecnico', 'ticket', 'nombre_autor', 'calificacion', 'calificacion_servicio', 'fecha']
 
 @admin.register(Proveedor)
 class ProveedorAdmin(admin.ModelAdmin):

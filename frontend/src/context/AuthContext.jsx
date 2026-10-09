@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import api from '../api/client'
+import { CLAVE_ACTIVIDAD } from '../config/tiempos'
 
 const AuthContext = createContext(null)
 
@@ -24,6 +25,7 @@ export function AuthProvider({ children }) {
     const { data } = await api.post('/auth/login/', { username, password })
     localStorage.setItem('access_token', data.access)
     localStorage.setItem('refresh_token', data.refresh)
+    localStorage.setItem(CLAVE_ACTIVIDAD, String(Date.now()))   // arranca el reloj de inactividad
     setUser(data.user)
     return data.user
   }

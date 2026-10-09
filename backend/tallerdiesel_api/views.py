@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.http import HttpResponse, FileResponse, Http404
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
+from django.db.models import Avg
 from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
@@ -487,6 +488,26 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
 # ── Tickets ───────────────────────────────────────────────────────────────────
 
+def solicitar_calificacion(ticket):
+    """Se llama cuando un ticket pasa a "Finalizado": guarda la fecha de cierre y le
+    avisa al cliente (campana) para que califique al técnico y al servicio."""
+    ticket.fecha_finalizacion = timezone.now()
+    ticket.save(update_fields=['fecha_finalizacion'])
+    if not ticket.cliente_id or Opinion.objects.filter(ticket=ticket).exists():
+        return
+    # Si el ticket se reabre y se vuelve a finalizar, no se duplica el aviso pendiente.
+    if Notificacion.objects.filter(destinatario=ticket.cliente, tipo='calificar_servicio',
+                                   referencia_id=ticket.id, leida=False).exists():
+        return
+    quien = f' y a {ticket.tecnico.nombre}' if ticket.tecnico_id else ''
+    Notificacion.objects.create(
+        destinatario=ticket.cliente,
+        titulo=f'⭐ Califica tu servicio {ticket.ticket_id}',
+        mensaje=f'Tu servicio fue finalizado. Cuéntanos qué tal estuvo: califica el servicio{quien} con estrellas.',
+        tipo='calificar_servicio', referencia_id=ticket.id,
+    )
+
+
 class TicketViewSet(viewsets.ModelViewSet):
     queryset = Ticket.objects.all()
     serializer_class = TicketSerializer
@@ -494,7 +515,7 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from django.db.models import Q
-        qs = super().get_queryset()
+        qs = super().get_queryset().prefetch_related('opinion')
         # Por default no se muestran los tickets en la papelera, salvo que se pida explícitamente
         # con ?eliminados=1 (usado por la acción "papelera" de abajo).
         if self.request.query_params.get('eliminados') == '1':
@@ -606,6 +627,9 @@ class TicketViewSet(viewsets.ModelViewSet):
                     tipo='cambio_estatus',
                     referencia_id=ticket.id,
                 )
+            # Al finalizar, se le pide al cliente que califique al técnico y el servicio
+            if ticket.estatus == 'terminado':
+                solicitar_calificacion(ticket)
 
         # Registrar asignación de técnico en bitácora
         if ticket.tecnico_id and ticket.tecnico_id != tecnico_anterior_id:
@@ -834,13 +858,15 @@ class TicketViewSet(viewsets.ModelViewSet):
                         text_body=f'{autor.nombre_completo} comentó en el ticket {ticket.ticket_id}:\n\n"{texto}"\n\nIngresa al sistema: {url}',
                     )
             elif autor.rol in ('coordinador', 'admin'):
-                if ticket.cliente_id and ticket.cliente.email:
+                if ticket.cliente_id:
+                    # La alerta de la campana se crea siempre (también con el servicio finalizado)
                     Notificacion.objects.create(
                         destinatario=ticket.cliente,
                         titulo='Respuesta a tu solicitud',
                         mensaje=f'{autor.nombre_completo} respondió en tu ticket {ticket.ticket_id}: "{texto[:80]}"',
                         tipo='comentario', referencia_id=ticket.id,
                     )
+                if ticket.cliente_id and ticket.cliente.email:
                     url = f'{settings.FRONTEND_URL}/cliente/dashboard'
                     enviar_html(
                         asunto=f'💬 Respuesta a tu solicitud — {ticket.ticket_id}',
@@ -952,6 +978,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                 es_cambio_estatus=True, estatus_anterior=anterior, estatus_nuevo='terminado',
             )
             texto_notif = f'{request.user.nombre_completo} confirmó la finalización del ticket {ticket.ticket_id}.'
+            solicitar_calificacion(ticket)
         else:
             ticket.save(update_fields=['finalizacion_solicitada'])
             ComentarioTicket.objects.create(
@@ -968,27 +995,72 @@ class TicketViewSet(viewsets.ModelViewSet):
             )
         return Response(TicketSerializer(ticket).data)
 
+    @staticmethod
+    def _estrellas(valor):
+        """Convierte a entero 1-5; devuelve None si no es válido."""
+        try:
+            n = int(valor)
+        except (TypeError, ValueError):
+            return None
+        return n if 1 <= n <= 5 else None
+
     @action(detail=True, methods=['post'])
     def calificar(self, request, pk=None):
-        """El cliente califica el servicio de un ticket ya finalizado (1-5 estrellas)."""
+        """El cliente califica un servicio ya finalizado: estrellas (1-5) al servicio y,
+        si hubo técnico, al técnico. El comentario es opcional."""
         ticket = self.get_object()
-        if not ticket.tecnico_id:
-            return Response({'error': 'Este ticket no tiene técnico asignado, no se puede calificar.'}, status=400)
-        if Opinion.objects.filter(ticket=ticket).exists():
-            return Response({'error': 'Ya calificaste este servicio.'}, status=400)
-        try:
-            calificacion = int(request.data.get('calificacion'))
-            assert 1 <= calificacion <= 5
-        except Exception:
-            return Response({'error': 'La calificación debe ser un número entre 1 y 5.'}, status=400)
-        opinion = Opinion.objects.create(
-            tecnico=ticket.tecnico,
-            ticket=ticket,
-            nombre_autor=request.user.nombre_completo,
-            calificacion=calificacion,
-            comentario=(request.data.get('comentario') or '').strip(),
-        )
+        if request.user.rol != 'cliente' or ticket.cliente_id != request.user.id:
+            return Response({'error': 'Solo el cliente del servicio puede calificarlo.'}, status=403)
+        if ticket.estatus != 'terminado':
+            return Response({'error': 'Solo puedes calificar un servicio finalizado.'}, status=400)
+
+        cal_servicio = self._estrellas(request.data.get('calificacion_servicio'))
+        if cal_servicio is None:
+            return Response({'error': 'Califica el servicio con un número de estrellas entre 1 y 5.'}, status=400)
+        cal_tecnico = None
+        if ticket.tecnico_id:
+            cal_tecnico = self._estrellas(request.data.get('calificacion_tecnico'))
+            if cal_tecnico is None:
+                return Response({'error': 'Califica al técnico con un número de estrellas entre 1 y 5.'}, status=400)
+        comentario = (request.data.get('comentario') or '').strip()[:1000]
+
+        with transaction.atomic():
+            if Opinion.objects.select_for_update().filter(ticket=ticket).exists():
+                return Response({'error': 'Ya calificaste este servicio.'}, status=400)
+            opinion = Opinion.objects.create(
+                tecnico=ticket.tecnico if ticket.tecnico_id else None,
+                ticket=ticket,
+                nombre_autor=request.user.nombre_completo[:100],
+                calificacion=cal_tecnico,
+                calificacion_servicio=cal_servicio,
+                comentario=comentario,
+            )
+            if ticket.tecnico_id:
+                promedio = ticket.tecnico.opiniones.exclude(calificacion__isnull=True).aggregate(p=Avg('calificacion'))['p']
+                if promedio is not None:
+                    ticket.tecnico.calificacion = round(promedio, 2)
+                    ticket.tecnico.save(update_fields=['calificacion'])
+            # Ya calificó: el aviso de la campana deja de estar pendiente
+            Notificacion.objects.filter(destinatario=request.user, tipo='calificar_servicio',
+                                        referencia_id=ticket.id, leida=False).update(leida=True)
         return Response(OpinionSerializer(opinion).data, status=201)
+
+    @action(detail=False, methods=['get'])
+    def pendientes_calificar(self, request):
+        """Servicios finalizados (últimos 30 días) que el cliente todavía no califica.
+        El frontend lo consulta cada 30 s para mostrarle la ventana de calificación."""
+        if request.user.rol != 'cliente':
+            return Response([])
+        desde = timezone.now() - timedelta(days=30)
+        qs = (Ticket.objects.filter(cliente=request.user, eliminado=False, estatus='terminado',
+                                    fecha_finalizacion__gte=desde, opinion__isnull=True)
+              .select_related('tecnico').order_by('fecha_finalizacion'))
+        return Response([{
+            'id': t.id, 'ticket_id': t.ticket_id,
+            'tecnico_id': t.tecnico_id, 'tecnico_nombre': t.tecnico.nombre if t.tecnico_id else None,
+            'tipo_unidad': t.tipo_unidad, 'unidad': t.unidad, 'lugar': t.lugar,
+            'fecha_finalizacion': t.fecha_finalizacion,
+        } for t in qs])
 
     @action(detail=True, methods=['get'])
     def pdf(self, request, pk=None):
@@ -1280,9 +1352,9 @@ class TecnicoViewSet(viewsets.ModelViewSet):
         serializer = OpinionSerializer(data={**request.data, 'tecnico': tecnico.id})
         if serializer.is_valid():
             serializer.save()
-            opiniones = tecnico.opiniones.all()
-            if opiniones.exists():
-                tecnico.calificacion = sum(o.calificacion for o in opiniones) / opiniones.count()
+            promedio = tecnico.opiniones.exclude(calificacion__isnull=True).aggregate(p=Avg('calificacion'))['p']
+            if promedio is not None:
+                tecnico.calificacion = promedio
                 tecnico.save()
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)

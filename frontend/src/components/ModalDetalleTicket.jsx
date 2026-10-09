@@ -1,8 +1,11 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import api from '../api/client'
 import EvidenciaBurbuja from './EvidenciaBurbuja'
 import { useAuth } from '../context/AuthContext'
 import AsignarTecnicoModal from './AsignarTecnicoModal'
+import ResumenCalificacion from './ResumenCalificacion'
+import { pedirCalificacion } from './CalificacionGlobal'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 
 export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLectura = false }) {
   const { user } = useAuth()
@@ -11,6 +14,15 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const [localTicket,  setLocalTicket]  = useState(ticket)
   const [permisoCargando, setPermisoCargando] = useState(false)
   const [asignandoTecnico, setAsignandoTecnico] = useState(false)
+
+  // Actualización automática cada 30 s: llegan comentarios nuevos, cambios de estatus,
+  // solicitudes de finalización y la calificación del cliente sin cerrar y reabrir el ticket.
+  // (Se mezcla con lo que ya se ve; lo que el usuario está escribiendo no se toca.)
+  const refrescarTicket = useCallback(async () => {
+    const { data } = await api.get(`/tickets/${ticket.id}/`)
+    setLocalTicket(prev => ({ ...prev, ...data }))
+  }, [ticket.id])
+  useAutoRefresh(refrescarTicket, { soloVisible: true })
 
   const fmt = n => `$${parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
   const esTerminado = localTicket.estatus === 'terminado'
@@ -270,6 +282,24 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                   <button className="btn btn-ghost btn-sm" disabled={finalizando} onClick={() => responderFinalizacion(false)}>↩️ No, aún no</button>
                 </div>
               )}
+            </div>
+          )}
+          {/* Calificación: el cliente la envía al finalizar; Coordinador y Admin la pueden ver */}
+          {esTerminado && user?.rol === 'cliente' && localTicket.puede_calificar && (
+            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', marginBottom: '1.25rem', fontSize: '0.85rem', color: '#92400e' }}>
+              ⭐ Tu servicio ya fue finalizado. ¿Nos ayudas calificando al técnico y al servicio?
+              <div style={{ marginTop: 8 }}>
+                <button className="btn btn-primary btn-sm" onClick={() => pedirCalificacion(localTicket.id)}>⭐ Calificar servicio</button>
+              </div>
+            </div>
+          )}
+          {localTicket.calificacion_detalle && (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <ResumenCalificacion
+                detalle={localTicket.calificacion_detalle}
+                tecnicoNombre={localTicket.tecnico_nombre}
+                titulo={user?.rol === 'cliente' ? 'Tu calificación' : 'Calificación del cliente'}
+              />
             </div>
           )}
           {puedeSolicitarFinalizar && (

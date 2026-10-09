@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import PasswordInput from '../components/PasswordInput'
+import { INACTIVIDAD_MS, CLAVE_SESION_EXPIRADA } from '../config/tiempos'
 
 const FEATURES_LEFT = [
   { icon: '🛡️', title: 'Tu unidad no puede esperar — nosotros tampoco', desc: 'Cada hora parada es dinero perdido. Por eso respondemos antes de que el café se enfríe.' },
@@ -22,6 +23,14 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [noVerificado, setNoVerificado] = useState(false)
   const [loading, setLoading] = useState(false)
+  // Aviso cuando la sesión se cerró sola por inactividad (se lee una sola vez)
+  const [sesionExpirada] = useState(() => {
+    try {
+      const v = sessionStorage.getItem(CLAVE_SESION_EXPIRADA) === '1'
+      sessionStorage.removeItem(CLAVE_SESION_EXPIRADA)
+      return v
+    } catch { return false }
+  })
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -83,6 +92,11 @@ export default function LoginPage() {
 
           {tab === 'login' ? (
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {sesionExpirada && !error && (
+                <div role="status" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '10px 14px', borderRadius: 8, fontSize: '0.875rem' }}>
+                  ⏳ Tu sesión se cerró por inactividad ({Math.round(INACTIVIDAD_MS / 60000)} minutos). Inicia sesión de nuevo para continuar.
+                </div>
+              )}
               {error && (
                 <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '10px 14px', borderRadius: 8, fontSize: '0.875rem' }}>
                   {error}

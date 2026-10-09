@@ -3,6 +3,7 @@ import Sidebar from '../components/Sidebar'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import ModalDetalleTicket from '../components/ModalDetalleTicket'
 import api from '../api/client'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 
 export default function DashboardAdmin() {
   const [tab,         setTab]         = useState('general')
@@ -13,9 +14,10 @@ export default function DashboardAdmin() {
   const [ticketSel,   setTicketSel]   = useState(null)
   const [ticketNotificacion, setTicketNotificacion] = useState(null)
 
-  const fetchAll = () => {
-    setLoading(true)
-    Promise.all([
+  // silencioso = actualización automática: no muestra el spinner de carga
+  const cargar = (silencioso) => {
+    if (!silencioso) setLoading(true)
+    return Promise.all([
       api.get('/tickets/dashboard_admin/'),
       api.get('/tickets/corte_mensual/'),
       api.get('/solicitudes-pendientes/'),
@@ -23,8 +25,10 @@ export default function DashboardAdmin() {
       setData(r1.data); setCorte(r2.data); setSolicitudes(r3.data)
     }).finally(() => setLoading(false))
   }
+  const fetchAll = () => cargar(false)
 
   useEffect(() => { fetchAll() }, [])
+  useAutoRefresh(() => cargar(true), { soloVisible: true })   // cada 30 s
 
   const abrirTicket = async (ticketId) => {
     if (!ticketId) return

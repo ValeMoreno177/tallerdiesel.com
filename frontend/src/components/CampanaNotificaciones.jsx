@@ -1,61 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useNotificaciones } from '../context/NotificacionesContext'
+import { pedirCalificacion } from './CalificacionGlobal'
 import api from '../api/client'
 
-// ── Sonido de notificación generado con Web Audio API (sin archivos externos) ──
-function reproducirSonido() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)()
-
-    const tiempos = [0, 0.15, 0.3]
-    const frecuencias = [880, 1100, 1320]
-
-    tiempos.forEach((t, i) => {
-      const osc  = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(frecuencias[i], ctx.currentTime + t)
-      gain.gain.setValueAtTime(0.3, ctx.currentTime + t)
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2)
-      osc.start(ctx.currentTime + t)
-      osc.stop(ctx.currentTime + t + 0.2)
-    })
-  } catch (e) {
-    console.warn('Audio no disponible:', e)
-  }
-}
-
+// Las notificaciones se consultan cada 30 s desde NotificacionesProvider (una sola vez para toda
+// la app, con sonido y aviso flotante). Esta campana solo las muestra.
 export default function CampanaNotificaciones({ onAbrirTicket }) {
-  const [notifs,        setNotifs]        = useState([])
-  const [abierto,       setAbierto]       = useState(false)
-  const [sonidoActivo,  setSonidoActivo]  = useState(true)
-  const prevCountRef = useRef(0)
+  const { notifs, noLeidas, marcarLeida, marcarTodas, sonidoActivo, setSonidoActivo } = useNotificaciones()
+  const [abierto, setAbierto] = useState(false)
   const ref          = useRef(null)
   const navigate     = useNavigate()
   const { user }     = useAuth()
-
-  const fetchNotifs = useCallback(() => {
-    api.get('/notificaciones/').then(({ data }) => {
-      setNotifs(prev => {
-        const noLeidasNuevas = data.filter(n => !n.leida).length
-        const noLeidasAntes  = prev.filter(n => !n.leida).length
-        // Reproducir sonido si hay notificaciones nuevas no leídas
-        if (noLeidasNuevas > noLeidasAntes && sonidoActivo) {
-          reproducirSonido()
-        }
-        return data
-      })
-    }).catch(() => {})
-  }, [sonidoActivo])
-
-  useEffect(() => {
-    fetchNotifs()
-    const interval = setInterval(fetchNotifs, 15000) // cada 15s
-    return () => clearInterval(interval)
-  }, [fetchNotifs])
 
   useEffect(() => {
     const handleClick = (e) => {
@@ -65,26 +22,20 @@ export default function CampanaNotificaciones({ onAbrirTicket }) {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const noLeidas = notifs.filter(n => !n.leida).length
-
-  const marcarLeida = async (id) => {
-    await api.post(`/notificaciones/${id}/leer/`)
-    setNotifs(prev => prev.map(n => n.id === id ? { ...n, leida: true } : n))
-  }
-
-  const marcarTodas = async () => {
-    await api.post('/notificaciones/leer-todas/')
-    setNotifs(prev => prev.map(n => ({ ...n, leida: true })))
-  }
-
   const formatFecha = (f) => {
     const d = new Date(f)
     return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
   }
 
   const handleRellenar = async (n) => {
-    await marcarLeida(n.id)
     setAbierto(false)
+    // Invitación a calificar: abre la ventana de estrellas. NO se marca como leída aquí;
+    // queda pendiente hasta que el cliente envíe su calificación.
+    if (n.tipo === 'calificar_servicio') {
+      pedirCalificacion(n.referencia_id)
+      return
+    }
+    await marcarLeida(n.id)
 
     if (n.referencia_id) {
       try {
@@ -113,6 +64,8 @@ export default function CampanaNotificaciones({ onAbrirTicket }) {
   const iconoPorTipo = (tipo) => {
     if (tipo === 'solicitud')        return '🔧'
     if (tipo === 'tecnico_asignado') return '👷'
+    if (tipo === 'comentario')       return '💬'
+    if (tipo === 'calificar_servicio') return '⭐'
     return '📋'
   }
 
@@ -219,7 +172,7 @@ export default function CampanaNotificaciones({ onAbrirTicket }) {
                           border: 'none', borderRadius: 20, padding: '4px 14px',
                           fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600,
                         }}>
-                        📋 Rellenar
+                        {n.tipo === 'calificar_servicio' ? '⭐ Calificar' : '📋 Rellenar'}
                       </button>
                     )}
                   </div>

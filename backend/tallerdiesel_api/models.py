@@ -179,6 +179,8 @@ class Ticket(models.Model):
     )  # Admin otorga permiso de edición al coordinador para este ticket
     fecha_creacion      = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    # Momento en que el servicio pasó a "Finalizado" (se usa para pedir la calificación al cliente).
+    fecha_finalizacion  = models.DateTimeField(null=True, blank=True)
 
     # ── Papelera (borrado suave) ──────────────────────────────────────────
     eliminado    = models.BooleanField(default=False)
@@ -308,11 +310,16 @@ class Tecnico(models.Model):
 
 
 class Opinion(models.Model):
-    tecnico      = models.ForeignKey(Tecnico, on_delete=models.CASCADE, related_name='opiniones')
+    """Calificación de un servicio. `calificacion` son las estrellas del técnico y
+    `calificacion_servicio` las del servicio realizado (1-5). El comentario es opcional.
+    Si el ticket no tuvo técnico, solo se guarda la calificación del servicio."""
+    tecnico      = models.ForeignKey(Tecnico, on_delete=models.CASCADE, related_name='opiniones',
+                                     null=True, blank=True)
     ticket       = models.ForeignKey('Ticket', on_delete=models.SET_NULL, null=True, blank=True, related_name='opinion')
     nombre_autor = models.CharField(max_length=100)
-    calificacion = models.IntegerField(default=5)
-    comentario   = models.TextField()
+    calificacion = models.IntegerField(null=True, blank=True)
+    calificacion_servicio = models.PositiveSmallIntegerField(null=True, blank=True)
+    comentario   = models.TextField(blank=True)
     fecha        = models.DateTimeField(auto_now_add=True)
 
 

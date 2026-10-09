@@ -123,6 +123,10 @@ class TicketSerializer(serializers.ModelSerializer):
     comision = serializers.ReadOnlyField()
     comentarios = ComentarioTicketSerializer(many=True, read_only=True)
     evidencias  = EvidenciaTicketSerializer(many=True, read_only=True)
+    # Calificación del cliente (estrellas al técnico y al servicio)
+    calificado          = serializers.SerializerMethodField()
+    puede_calificar     = serializers.SerializerMethodField()
+    calificacion_detalle = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -139,6 +143,29 @@ class TicketSerializer(serializers.ModelSerializer):
 
     def get_tecnico_nombre(self, obj):
         return obj.tecnico.nombre if obj.tecnico else None
+
+    def _opinion(self, obj):
+        # Se usa .all() (no .first()) para aprovechar el prefetch_related('opinion') del viewset.
+        ops = list(obj.opinion.all())
+        return ops[0] if ops else None
+
+    def get_calificado(self, obj):
+        return self._opinion(obj) is not None
+
+    def get_puede_calificar(self, obj):
+        return bool(obj.estatus == 'terminado' and obj.cliente_id and not obj.eliminado
+                    and self._opinion(obj) is None)
+
+    def get_calificacion_detalle(self, obj):
+        op = self._opinion(obj)
+        if not op:
+            return None
+        return {
+            'calificacion_tecnico': op.calificacion,
+            'calificacion_servicio': op.calificacion_servicio,
+            'comentario': op.comentario,
+            'fecha': op.fecha,
+        }
 
 
 class UnidadFlotillaSerializer(serializers.ModelSerializer):

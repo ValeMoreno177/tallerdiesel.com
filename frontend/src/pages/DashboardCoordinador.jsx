@@ -4,6 +4,7 @@ import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import ModalDetalleTicket from '../components/ModalDetalleTicket'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 
 export default function DashboardCoordinador() {
   const { user } = useAuth()
@@ -14,9 +15,10 @@ export default function DashboardCoordinador() {
   const [ticketSel,         setTicketSel]         = useState(null)
   const [ticketNotificacion, setTicketNotificacion] = useState(null)
 
-  const fetchData = () => {
-    setLoading(true)
-    Promise.all([
+  // silencioso = actualización automática: no muestra el spinner de carga
+  const cargar = (silencioso) => {
+    if (!silencioso) setLoading(true)
+    return Promise.all([
       api.get('/tickets/dashboard_coordinador/'),
       api.get('/solicitudes-pendientes/'),
     ]).then(([r1, r2]) => {
@@ -24,8 +26,10 @@ export default function DashboardCoordinador() {
       setSolicitudes(r2.data)
     }).finally(() => setLoading(false))
   }
+  const fetchData = () => cargar(false)
 
   useEffect(() => { fetchData() }, [])
+  useAutoRefresh(() => cargar(true), { soloVisible: true })   // cada 30 s
 
   // Marcar como "rellena" — redirige al ticket creado
   const marcarRellenada = async (s) => {

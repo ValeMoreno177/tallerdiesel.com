@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 import ModalDetalleTicket from '../components/ModalDetalleTicket'
 import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
@@ -386,8 +387,11 @@ export default function BitacoraPage({ rol }) {
     }
   }, [searchParams, tickets])
 
+  const paginasCargadas = useRef(1)   // cuántas páginas de tickets tiene cargadas el usuario
+
   const fetchAll = useCallback(() => {
     setLoading(true)
+    paginasCargadas.current = 1
     Promise.all([
       api.get('/tickets/'),
       api.get('/proveedores/'),
@@ -411,6 +415,7 @@ export default function BitacoraPage({ rol }) {
     setCargandoMas(true)
     api.get(paginaSiguiente)
       .then(({ data }) => {
+        paginasCargadas.current += 1
         setTickets(prev => [...prev, ...(data.results || data)])
         setPaginaSiguiente(data.next || null)
       })
@@ -418,6 +423,27 @@ export default function BitacoraPage({ rol }) {
   }
 
   useEffect(() => { fetchAll() }, [fetchAll])
+
+  // Actualización automática cada 30 s: solo los tickets, sin spinner y sin perder el scroll,
+  // los filtros ni las páginas que el usuario ya cargó con "Cargar más".
+  const refrescarSilencioso = useCallback(async () => {
+    const { data } = await api.get('/tickets/')
+    const frescos = data.results || data
+    if (paginasCargadas.current === 1) {
+      setTickets(frescos)
+      setPaginaSiguiente(data.next || null)
+      setTotalTickets(data.count ?? frescos.length)
+    } else {
+      // Ya hay más páginas cargadas: se actualizan los que cambiaron y se agregan los nuevos arriba
+      setTickets(prev => {
+        const porId = new Map(frescos.map(t => [t.id, t]))
+        const idsPrev = new Set(prev.map(t => t.id))
+        return [...frescos.filter(t => !idsPrev.has(t.id)), ...prev.map(t => porId.get(t.id) || t)]
+      })
+      setTotalTickets(data.count ?? frescos.length)
+    }
+  }, [])
+  useAutoRefresh(refrescarSilencioso, { soloVisible: true })
 
   const fetchPapelera = useCallback(() => {
     setLoadingPapelera(true)

@@ -1,9 +1,14 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import Toast from '../components/Toast'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import EvidenciaBurbuja from '../components/EvidenciaBurbuja'
+import CampanaNotificaciones from '../components/CampanaNotificaciones'
+import ResumenCalificacion from '../components/ResumenCalificacion'
+import { pedirCalificacion } from '../components/CalificacionGlobal'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 
 const PASOS = ['pendiente', 'atendido', 'proceso', 'terminado']
 const ETIQUETAS = { pendiente: 'Pendiente', atendido: 'En camino', proceso: 'Reparando', terminado: 'Finalizado' }
@@ -106,7 +111,7 @@ function TicketCard({ t, onUpdated }) {
   }
 
   return (
-    <div className="card">
+    <div className="card" id={`ticket-${t.id}`}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
         <div>
           <span style={{ fontFamily: 'Bebas Neue', fontSize: '1.2rem', letterSpacing: 1 }}>{t.ticket_id}</span>
@@ -143,6 +148,20 @@ function TicketCard({ t, onUpdated }) {
             <button className="btn btn-primary btn-sm" disabled={respondiendo} onClick={() => responderFinalizacion(true)}>✅ Sí, finalizar</button>
             <button className="btn btn-ghost btn-sm" disabled={respondiendo} onClick={() => responderFinalizacion(false)}>↩️ No, aún no</button>
           </div>
+        </div>
+      )}
+
+      {finalizado && t.puede_calificar && (
+        <div style={{ marginTop: 12, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: '0.85rem', color: '#92400e' }}>
+          ⭐ Tu servicio ya fue finalizado. ¿Nos ayudas calificando{t.tecnico_nombre ? ' al técnico y' : ''} el servicio?
+          <div style={{ marginTop: 8 }}>
+            <button className="btn btn-primary btn-sm" onClick={() => pedirCalificacion(t.id)}>⭐ Calificar servicio</button>
+          </div>
+        </div>
+      )}
+      {t.calificacion_detalle && (
+        <div style={{ marginTop: 12 }}>
+          <ResumenCalificacion detalle={t.calificacion_detalle} tecnicoNombre={t.tecnico_nombre} titulo="Tu calificación" />
         </div>
       )}
 
@@ -221,8 +240,10 @@ export default function ClienteBitacoraPage() {
   const [loading, setLoading] = useState(true)
   const [toastError, setToastError] = useState('')
 
+  const [searchParams, setSearchParams] = useSearchParams()
+
   const fetchTickets = () => {
-    api.get('/tickets/')
+    return api.get('/tickets/')
       .then(({ data }) => setTickets(data.results || data))
       .catch(() => setToastError('No se pudieron cargar tus tickets.'))
       .finally(() => setLoading(false))
@@ -230,14 +251,29 @@ export default function ClienteBitacoraPage() {
 
   useEffect(() => { fetchTickets() }, [])
 
+  // Actualización automática cada 30 s (sin avisos de error: un corte breve de red no molesta).
+  // Las tarjetas conservan lo que el cliente esté escribiendo o editando.
+  useAutoRefresh(() => api.get('/tickets/').then(({ data }) => setTickets(data.results || data)), { soloVisible: true })
+
+  // ?ticket=ID (viene de una notificación): baja hasta ese servicio
+  useEffect(() => {
+    const id = searchParams.get('ticket')
+    if (!id || loading) return
+    document.getElementById(`ticket-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setSearchParams({}, { replace: true })
+  }, [searchParams, loading, setSearchParams])
+
   return (
     <div className="dashboard-layout">
       <Sidebar />
       <Toast show={!!toastError} tipo="error" titulo="Ups" mensaje={toastError} onClose={() => setToastError('')} />
       <main className="main-content">
-        <div className="page-header">
-          <h1 className="page-title">🧑‍💼 Bitácora</h1>
-          <p className="page-subtitle">Historial de todos tus servicios solicitados</p>
+        <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 className="page-title">🧑‍💼 Bitácora</h1>
+            <p className="page-subtitle">Historial de todos tus servicios solicitados</p>
+          </div>
+          <CampanaNotificaciones />
         </div>
 
         {loading ? (
