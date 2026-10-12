@@ -1,21 +1,25 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import CampoUsuarioCompartido from '../components/CampoUsuarioCompartido'
 
 export default function ReenviarVerificacionPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const [email, setEmail] = useState(location.state?.email || '')
+  const [usuario, setUsuario] = useState('')
+  const [pedirUsuario, setPedirUsuario] = useState(false)   // el correo lo comparten varias cuentas
   const [estado, setEstado] = useState(null)
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true)
     try {
-      const { data } = await api.post('/auth/reenviar-verificacion/', { email })
+      const { data } = await api.post('/auth/reenviar-verificacion/', { email, ...(usuario.trim() ? { username: usuario.trim() } : {}) })
       setEstado({ ok: true, msg: data.mensaje })
-      setTimeout(() => navigate('/verificar-email', { state: { email } }), 1200)
+      setTimeout(() => navigate('/verificar-email', { state: { email, usuario: usuario.trim() } }), 1200)
     } catch (err) {
+      if (err.response?.data?.requiere_usuario) { setPedirUsuario(true); setEstado(null); return }
       setEstado({ ok: false, msg: err.response?.data?.error || 'Error al reenviar.' })
     } finally { setLoading(false) }
   }
@@ -36,8 +40,9 @@ export default function ReenviarVerificacionPage() {
           <div className="form-group">
             <label className="form-label">Correo electrónico</label>
             <input className="form-input" type="email" placeholder="correo@empresa.com"
-              value={email} onChange={e => setEmail(e.target.value)} required />
+              value={email} onChange={e => { setEmail(e.target.value); setPedirUsuario(false); setUsuario('') }} required />
           </div>
+          {pedirUsuario && <CampoUsuarioCompartido value={usuario} onChange={setUsuario} />}
           <button className="btn btn-primary" type="submit" disabled={loading}
             style={{ width: '100%', justifyContent: 'center', borderRadius: 50, padding: '12px' }}>
             {loading ? 'Enviando...' : 'Reenviar código'}

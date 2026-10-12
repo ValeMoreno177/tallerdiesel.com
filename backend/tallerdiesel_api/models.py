@@ -24,7 +24,10 @@ class UsuarioManager(BaseUserManager):
 class Usuario(AbstractBaseUser, PermissionsMixin):
     ROL_CHOICES = [('admin','Administrador'),('coordinador','Coordinador'),('cliente','Cliente')]
     username        = models.CharField(max_length=150, unique=True)
-    email           = models.EmailField(unique=True)
+    # El correo es único, EXCEPTO entre coordinadores: el Administrador puede dar de alta varios
+    # coordinadores con el mismo correo (p. ej. un buzón de coordinación). Eso lo valida
+    # UsuarioSerializer; aquí la base de datos lo refuerza para clientes y administradores.
+    email           = models.EmailField()
     nombre          = models.CharField(max_length=100, blank=True)
     apellido_paterno= models.CharField(max_length=100, blank=True)
     apellido_materno= models.CharField(max_length=100, blank=True)
@@ -51,6 +54,11 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     class Meta:
         verbose_name = 'Usuario'
         verbose_name_plural = 'Usuarios'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['email'], condition=~models.Q(rol='coordinador'),
+                name='usuario_email_unico_salvo_coordinador'),
+        ]
 
     def __str__(self):
         return f'{self.username} ({self.rol})'

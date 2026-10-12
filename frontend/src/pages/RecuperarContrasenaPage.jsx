@@ -2,11 +2,14 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import PasswordInput from '../components/PasswordInput'
+import CampoUsuarioCompartido from '../components/CampoUsuarioCompartido'
 
 export default function RecuperarContrasenaPage() {
   const navigate = useNavigate()
   const [paso, setPaso] = useState('solicitar') // solicitar | confirmar | ok
   const [email, setEmail] = useState('')
+  const [usuario, setUsuario] = useState('')
+  const [pedirUsuario, setPedirUsuario] = useState(false)   // el correo lo comparten varias cuentas
   const [codigo, setCodigo] = useState('')
   const [password, setPassword] = useState('')
   const [confirmar, setConfirmar] = useState('')
@@ -17,7 +20,8 @@ export default function RecuperarContrasenaPage() {
   const handleSolicitar = async (e) => {
     e.preventDefault(); setError(''); setLoading(true)
     try {
-      const { data } = await api.post('/auth/recuperar/', { email })
+      const { data } = await api.post('/auth/recuperar/', { email, ...(usuario.trim() ? { username: usuario.trim() } : {}) })
+      if (data.requiere_usuario) { setPedirUsuario(true); return }   // falta saber de qué cuenta es
       setMensaje(data.mensaje)
       setPaso('confirmar')
     } catch (err) {
@@ -31,10 +35,11 @@ export default function RecuperarContrasenaPage() {
     if (password.length < 8) { setError('La contraseña debe tener al menos 8 caracteres.'); return }
     setLoading(true)
     try {
-      const { data } = await api.post('/auth/recuperar/confirmar/', { email, codigo, password })
+      const { data } = await api.post('/auth/recuperar/confirmar/', { email, codigo, password, ...(usuario.trim() ? { username: usuario.trim() } : {}) })
       setMensaje(data.mensaje)
       setPaso('ok')
     } catch (err) {
+      if (err.response?.data?.requiere_usuario) { setPedirUsuario(true); setPaso('solicitar') }
       setError(err.response?.data?.error || 'Código inválido.')
     } finally { setLoading(false) }
   }
@@ -69,8 +74,9 @@ export default function RecuperarContrasenaPage() {
               <div className="form-group">
                 <label className="form-label">Correo electrónico</label>
                 <input className="form-input" type="email" placeholder="correo@empresa.com"
-                  value={email} onChange={e => setEmail(e.target.value)} required />
+                  value={email} onChange={e => { setEmail(e.target.value); setPedirUsuario(false); setUsuario('') }} required />
               </div>
+              {pedirUsuario && <CampoUsuarioCompartido value={usuario} onChange={setUsuario} />}
               <button className="btn btn-primary" type="submit" disabled={loading}
                 style={{ width: '100%', justifyContent: 'center', borderRadius: 50, padding: '12px' }}>
                 {loading ? 'Enviando...' : 'Enviar código'}

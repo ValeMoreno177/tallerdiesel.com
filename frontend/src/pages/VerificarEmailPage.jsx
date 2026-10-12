@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
+import CampoUsuarioCompartido from '../components/CampoUsuarioCompartido'
 
 export default function VerificarEmailPage() {
   const location = useLocation()
@@ -12,6 +13,8 @@ export default function VerificarEmailPage() {
     ''
 
   const [email, setEmail] = useState(emailInicial)
+  const [usuario, setUsuario] = useState(location.state?.usuario || '')
+  const [pedirUsuario, setPedirUsuario] = useState(!!location.state?.usuario)   // correo compartido por varias cuentas
   const [codigo, setCodigo] = useState('')
   const [estado, setEstado] = useState('form') // form | ok | error
   const [mensaje, setMensaje] = useState('')
@@ -21,10 +24,11 @@ export default function VerificarEmailPage() {
     e.preventDefault()
     setLoading(true); setMensaje('')
     try {
-      const { data } = await api.post('/auth/verificar/', { email, codigo })
+      const { data } = await api.post('/auth/verificar/', { email, codigo, ...(usuario.trim() ? { username: usuario.trim() } : {}) })
       setEstado('ok')
       setMensaje(data.mensaje)
     } catch (err) {
+      if (err.response?.data?.requiere_usuario) setPedirUsuario(true)
       setEstado('error')
       setMensaje(err.response?.data?.error || 'Código inválido.')
     } finally {
@@ -66,6 +70,7 @@ export default function VerificarEmailPage() {
                 <input className="form-input" type="email" placeholder="correo@empresa.com"
                   value={email} onChange={e => setEmail(e.target.value)} required />
               </div>
+              {pedirUsuario && <CampoUsuarioCompartido value={usuario} onChange={setUsuario} />}
               <div className="form-group">
                 <label className="form-label">Código de verificación</label>
                 <input className="form-input" type="text" inputMode="numeric" maxLength={6}
@@ -80,7 +85,7 @@ export default function VerificarEmailPage() {
             </form>
 
             <div style={{ marginTop: '1.25rem' }}>
-              <Link to="/reenviar-verificacion" state={{ email }} style={{ color: 'var(--azul)', fontSize: '0.875rem' }}>
+              <Link to="/reenviar-verificacion" state={{ email, usuario }} style={{ color: 'var(--azul)', fontSize: '0.875rem' }}>
                 ¿No te llegó el código? Reenviar
               </Link>
             </div>

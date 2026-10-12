@@ -32,7 +32,12 @@ function ModalUsuario({ usuario, onClose, onSaved, viewerEsAdmin }) {
       else await api.patch(`/usuarios/${usuario.id}/`, payload)
       onSaved(); onClose()
     } catch (e) {
-      alert('Error: ' + JSON.stringify(e.response?.data))
+      // Muestra el mensaje legible del servidor (p. ej. "Solo el Administrador puede usar un correo…")
+      const d = e.response?.data
+      const msg = d && typeof d === 'object'
+        ? Object.values(d).flat().map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join('\n')
+        : JSON.stringify(d)
+      alert('Error: ' + msg)
     } finally { setSaving(false) }
   }
 
@@ -61,6 +66,12 @@ function ModalUsuario({ usuario, onClose, onSaved, viewerEsAdmin }) {
           <div className="form-group">
             <label className="form-label">Correo electrónico *</label>
             <input className="form-input" type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="juan@empresa.com" />
+            {viewerEsAdmin && form.rol === 'coordinador' && (
+              <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: 4 }}>
+                💡 Como Administrador puedes usar un correo que ya tenga otro coordinador, las veces que necesites.
+                Cada cuenta conserva su propio usuario y contraseña.
+              </div>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">Rol *</label>

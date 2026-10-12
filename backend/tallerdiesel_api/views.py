@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.http import HttpResponse, FileResponse, Http404
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
-from django.db.models import Avg
+from django.db.models import Avg, Q
 from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
@@ -106,6 +106,35 @@ def generar_pdf_ticket(ticket):
     response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{ticket.ticket_id}.pdf"'
     return response
+
+
+# ── Correos compartidos entre coordinadores ──────────────────────────────────
+
+def _usuario_por_correo(email, username=None, **filtros):
+    """Busca la cuenta de un correo. Varios coordinadores pueden compartir correo (lo da de alta el
+    Administrador), así que el correo solo identifica la cuenta cuando es única; si no, se pide el
+    nombre de usuario. Devuelve (usuario, ambiguo)."""
+    qs = User.objects.filter(email__iexact=email, **filtros)
+    if username:
+        qs = qs.filter(username=str(username).strip())
+    candidatos = list(qs[:2])
+    if len(candidatos) == 1:
+        return candidatos[0], False
+    return None, len(candidatos) > 1
+
+
+def _correos_unicos(correos):
+    """Quita correos repetidos (sin distinguir mayúsculas) para no mandar el mismo mensaje dos veces."""
+    vistos, resultado = set(), []
+    for c in correos:
+        c = (c or '').strip()
+        if c and c.lower() not in vistos:
+            vistos.add(c.lower())
+            resultado.append(c)
+    return resultado
+
+
+MSG_CORREO_COMPARTIDO = 'Este correo lo comparten varias cuentas. Escribe tu nombre de usuario para continuar.'
 
 
 # ── Límites de solicitudes (fuerza bruta) ────────────────────────────────────
@@ -279,8 +308,12 @@ def verificar_email(request):
     codigo = (request.data.get('codigo') or '').strip()
     if not email or not codigo:
         return Response({'error': 'Correo y código son requeridos.'}, status=400)
+    user, ambiguo = _usuario_por_correo(email, request.data.get('username'), email_verificado=False)
+    if ambiguo:
+        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
     try:
-        user = User.objects.get(email__iexact=email)
+        if not user:
+            raise User.DoesNotExist
         token_obj = TokenVerificacion.objects.get(usuario=user)
 
         if timezone.now() - token_obj.creado_en > timedelta(minutes=MINUTOS_VALIDEZ_CODIGO):
@@ -310,8 +343,12 @@ def verificar_email(request):
 @throttle_classes([CodigoRateThrottle])
 def reenviar_verificacion(request):
     email = request.data.get('email')
+    user, ambiguo = _usuario_por_correo(email, request.data.get('username'), email_verificado=False)
+    if ambiguo:
+        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
     try:
-        user = User.objects.get(email__iexact=email, email_verificado=False)
+        if not user:
+            raise User.DoesNotExist
         token_obj, _ = TokenVerificacion.objects.get_or_create(usuario=user)
         codigo = token_obj.generar_codigo()
         token_obj.save(update_fields=['codigo', 'intentos'])
@@ -344,9 +381,11 @@ def solicitar_recuperacion(request):
     email = (request.data.get('email') or '').strip().lower()
     if not email:
         return Response({'error': 'El correo es requerido.'}, status=400)
-    try:
-        user = User.objects.get(email__iexact=email)
-    except User.DoesNotExist:
+    user, ambiguo = _usuario_por_correo(email, request.data.get('username'))
+    if ambiguo:
+        # Correo compartido por varios coordinadores: hay que decir de cuál cuenta es el cambio
+        return Response({'mensaje': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True})
+    if not user:
         # No revelamos si el correo existe o no, por seguridad
         return Response({'mensaje': 'Si el correo existe, te enviamos un código de recuperación.'})
 
@@ -382,8 +421,12 @@ def confirmar_recuperacion(request):
         return Response({'error': 'Correo, código y nueva contraseña son requeridos.'}, status=400)
     if len(password) < 8:
         return Response({'error': 'La contraseña debe tener al menos 8 caracteres.'}, status=400)
+    user, ambiguo = _usuario_por_correo(email, request.data.get('username'))
+    if ambiguo:
+        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
     try:
-        user = User.objects.get(email__iexact=email)
+        if not user:
+            raise User.DoesNotExist
         codigo_obj = CodigoRecuperacion.objects.get(usuario=user)
 
         if timezone.now() - codigo_obj.creado_en > timedelta(minutes=MINUTOS_VALIDEZ_CODIGO):
@@ -842,6 +885,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                 correo_empresa = settings.EMAIL_EMPRESA
                 if correo_empresa not in emails:
                     emails.append(correo_empresa)
+                emails = _correos_unicos(emails)   # coordinadores con el mismo correo: un solo envío
                 for u in destinatarios_usuarios:
                     Notificacion.objects.create(
                         destinatario=u,
@@ -1083,7 +1127,10 @@ class TicketViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def dashboard_coordinador(self, request):
         user = request.user
-        tickets = Ticket.objects.filter(coordinador=user)
+        # Mismos tickets que ve en su bitácora: los suyos + los recién solicitados que aún no
+        # tienen coordinador (si no, un servicio nuevo no se vería hasta que alguien lo tome).
+        # Los eliminados (papelera) no cuentan.
+        tickets = Ticket.objects.filter(Q(coordinador=user) | Q(coordinador__isnull=True), eliminado=False)
         return Response({
             'en_proceso': tickets.filter(estatus='proceso').count(),
             'pendientes': tickets.filter(estatus__in=['pendiente', 'atendido']).count(),
@@ -1094,7 +1141,7 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def dashboard_admin(self, request):
-        tickets = Ticket.objects.all()
+        tickets = Ticket.objects.filter(eliminado=False)
         total_ingresos = sum(float(t.total) for t in tickets)
         total_ganancia = sum(float(t.ganancia) for t in tickets)
         total_iva = sum(float(t.iva) for t in tickets)
@@ -1112,7 +1159,7 @@ class TicketViewSet(viewsets.ModelViewSet):
             key = t.tecnico.nombre
             tecnicos_stats[key]['tickets'] += 1
             tecnicos_stats[key]['ganancia'] += float(t.ganancia)
-        for op in Opinion.objects.filter(tecnico__isnull=False):
+        for op in Opinion.objects.filter(tecnico__isnull=False, calificacion__isnull=False):
             tecnicos_stats[op.tecnico.nombre]['calificaciones'].append(op.calificacion)
         tickets_por_tecnico = [{
             'tecnico': nombre,
@@ -1471,6 +1518,7 @@ def solicitud_servicio(request):
         correo_empresa = settings.EMAIL_EMPRESA
         if correo_empresa not in emails_destino:
             emails_destino.append(correo_empresa)
+        emails_destino = _correos_unicos(emails_destino)   # coordinadores con el mismo correo: un solo envío
 
         for dest in destinatarios:
             Notificacion.objects.create(
