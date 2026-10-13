@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Sidebar from '../components/Sidebar'
 import api from '../api/client'
+import Avatar from '../components/Avatar'
 import { useAuth } from '../context/AuthContext'
 import PasswordInput from '../components/PasswordInput'
 
@@ -217,7 +218,11 @@ export default function UsuariosPage() {
                   {filtrados.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>No hay usuarios</td></tr>}
                   {filtrados.map(u => (
                     <tr key={u.id}>
-                      <td style={{ fontWeight: 600 }}>{u.username}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <Avatar usuario={u} size={28} />{u.username}
+                        </span>
+                      </td>
                       <td>{u.nombre_completo || '—'}</td>
                       <td>{u.email}</td>
                       <td>

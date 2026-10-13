@@ -21,6 +21,7 @@ import UsuariosPage from "./pages/UsuariosPage";
 import ConfiguracionPage from "./pages/ConfiguracionPage";
 import TourGuia from "./components/TourGuia";
 import SesionInactividad from "./components/SesionInactividad";
+import PerfilPage from "./pages/PerfilPage";
 import CalificacionGlobal from "./components/CalificacionGlobal";
 import { NotificacionesProvider } from "./context/NotificacionesContext";
 
@@ -158,6 +159,14 @@ export default function App() {
             element={
               <RutaProtegida roles={["coordinador"]}>
                 <BitacoraPage rol="coordinador" />
+              </RutaProtegida>
+            }
+          />
+          <Route
+            path="/coordinador/perfil"
+            element={
+              <RutaProtegida roles={["coordinador"]}>
+                <PerfilPage />
               </RutaProtegida>
             }
           />

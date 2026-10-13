@@ -2,6 +2,7 @@ import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useState, useEffect } from "react";
 import { getMenuItems } from "../utils/menuItems";
+import Avatar from "./Avatar";
 
 const LOGO = () => (
   <div
@@ -80,23 +81,7 @@ export default function Sidebar() {
               gap: 8,
             }}
           >
-            <div
-              style={{
-                width: 34,
-                height: 34,
-                borderRadius: "50%",
-                background: "var(--naranja)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: 700,
-                fontSize: "0.875rem",
-                color: "white",
-                flexShrink: 0,
-              }}
-            >
-              {(user?.nombre || user?.username || "?")[0].toUpperCase()}
-            </div>
+            <Avatar usuario={user} size={34} />
 
             <div>
               <div className="username">

@@ -18,6 +18,7 @@ export function getMenuItems(user) {
         : []),
       { to: '/mapa-tecnicos', label: 'Mapa de Técnicos', icon: '🗺️' },
       { to: '/admin/configuracion', label: 'Configuración', icon: '⚙' },
+      { to: '/coordinador/perfil', label: 'Mi perfil', icon: '👤' },
     ]
 
   return [
