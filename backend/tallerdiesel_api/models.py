@@ -68,6 +68,15 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         partes = [self.nombre, self.apellido_paterno, self.apellido_materno]
         return ' '.join(p for p in partes if p) or self.username
 
+    def save(self, *args, **kwargs):
+        # Los coordinadores los da de alta el Administrador (no se registran solos), así que su correo
+        # NO requiere verificación: la cuenta queda lista para iniciar sesión.
+        if self.rol == 'coordinador' and not self.email_verificado:
+            self.email_verificado = True
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = set(kwargs['update_fields']) | {'email_verificado'}
+        super().save(*args, **kwargs)
+
 
 class TokenVerificacion(models.Model):
     usuario    = models.OneToOneField(Usuario, on_delete=models.CASCADE, related_name='token_verificacion')
@@ -277,6 +286,16 @@ def ruta_evidencia(instance, filename):
     import os
     ext = os.path.splitext(filename)[1].lower()
     return f'evidencias/ticket_{instance.ticket_id}/{uuid.uuid4().hex}{ext}'
+
+
+class FotoPerfil(models.Model):
+    """Foto de perfil del usuario. Se guarda en la base de datos (ya recortada a unos 256 px por el
+    navegador), en una tabla aparte para no cargarla en cada petición, y sin depender del disco del
+    servidor, que en la nube se borra en cada despliegue."""
+    usuario     = models.OneToOneField(Usuario, on_delete=models.CASCADE, related_name='foto_perfil')
+    contenido   = models.BinaryField()
+    tipo        = models.CharField(max_length=20)          # image/jpeg · image/png · image/webp
+    actualizada = models.DateTimeField(auto_now=True)
 
 
 class EvidenciaTicket(models.Model):

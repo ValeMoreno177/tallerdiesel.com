@@ -10,20 +10,30 @@ User = get_user_model()
 class UsuarioSerializer(serializers.ModelSerializer):
     nombre_completo = serializers.ReadOnlyField()
     password = serializers.CharField(write_only=True, required=False)
+    # Marca de tiempo de la foto de perfil (None = sin foto). Cambia al subir otra, así el navegador la recarga.
+    foto_version = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'nombre', 'apellido_paterno',
                   'apellido_materno', 'empresa', 'telefono', 'puesto', 'rol',
                   'is_active', 'email_verificado', 'fecha_registro', 'nombre_completo', 'password',
-                  'puede_editar_sistema', 'aviso_privacidad_aceptado', 'tour_completado']
+                  'puede_editar_sistema', 'aviso_privacidad_aceptado', 'tour_completado', 'foto_version']
         read_only_fields = ['id', 'fecha_registro', 'aviso_privacidad_aceptado', 'tour_completado']
+
+    def get_foto_version(self, obj):
+        # En listados el viewset ya trae la fecha (annotate); en login/me se consulta una sola vez.
+        if hasattr(obj, 'foto_actualizada'):
+            fecha = obj.foto_actualizada
+        else:
+            from .models import FotoPerfil
+            fecha = FotoPerfil.objects.filter(usuario_id=obj.pk).values_list('actualizada', flat=True).first()
+        return int(fecha.timestamp()) if fecha else None
 
     def validate(self, data):
         """Un correo no se puede repetir entre cuentas, con UNA excepción: el Administrador puede
         dar de alta varios COORDINADORES con el mismo correo (las veces que haga falta). Nadie más
         puede hacerlo, y un correo de cliente o administrador nunca se comparte."""
-        self._correo_compartido = False
         inst = self.instance
         email = (data.get('email', inst.email if inst else '') or '').strip()
         rol = data.get('rol', inst.rol if inst else 'cliente')
@@ -43,7 +53,6 @@ class UsuarioSerializer(serializers.ModelSerializer):
             if getattr(viewer, 'rol', None) != 'admin':
                 raise serializers.ValidationError(
                     {'email': 'Solo el Administrador puede usar un correo que ya tiene otro coordinador.'})
-            self._correo_compartido = True
             return data
         if rol == 'coordinador':
             raise serializers.ValidationError(
@@ -52,10 +61,6 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
-        if getattr(self, '_correo_compartido', False):
-            # El Administrador comparte un correo que ya usa otro coordinador: no hay un buzón
-            # nuevo que verificar, la cuenta queda lista para iniciar sesión.
-            validated_data['email_verificado'] = True
         user = User(**validated_data)
         if password:
             user.set_password(password)
@@ -64,8 +69,6 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
-        if getattr(self, '_correo_compartido', False):
-            validated_data['email_verificado'] = True
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if password:

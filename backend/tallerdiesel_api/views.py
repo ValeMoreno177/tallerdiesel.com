@@ -3,7 +3,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view, permission_classes, action, throttle_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission, SAFE_METHODS
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.http import HttpResponse, FileResponse, Http404
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
-from django.db.models import Avg, Q
+from django.db.models import Avg, Q, F
 from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
@@ -20,7 +20,7 @@ import io
 
 from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
                      Notificacion, ComentarioTicket, TokenVerificacion, ConfiguracionEmpresa,
-                     CodigoRecuperacion, UnidadFlotilla, EvidenciaTicket)
+                     CodigoRecuperacion, UnidadFlotilla, EvidenciaTicket, FotoPerfil)
 from .emails import enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
 from .serializers import (
     UsuarioSerializer, RegistroSerializer, TicketSerializer,
@@ -147,6 +147,10 @@ class CodigoRateThrottle(AnonRateThrottle):
     scope = 'auth_codigo'
 
 
+class CambioPasswordThrottle(UserRateThrottle):
+    scope = 'cambiar_password'
+
+
 # Ventana de validez de los códigos de verificación / recuperación
 MINUTOS_VALIDEZ_CODIGO = 15
 MAX_INTENTOS_CODIGO = 5
@@ -239,7 +243,7 @@ def login_view(request):
             return Response({'error': 'Usuario inactivo.'}, status=400)
         if not user.check_password(password):
             raise Exception()
-        if not user.email_verificado:
+        if not user.email_verificado and user.rol != 'coordinador':
             return Response({'error': 'Debes verificar tu correo electrónico antes de iniciar sesión.', 'no_verificado': True}, status=403)
         refresh = RefreshToken.for_user(user)
         return Response({
@@ -457,6 +461,72 @@ def me_view(request):
     return Response(UsuarioSerializer(request.user).data)
 
 
+# ── Perfil: foto y cambio de contraseña ──────────────────────────────────────
+
+MAX_FOTO_PERFIL_BYTES = 1 * 1024 * 1024   # el navegador la manda ya reducida (~30 KB); 1 MB es un tope de seguridad
+
+
+def _tipo_imagen(datos):
+    """Tipo real de la imagen por sus primeros bytes (no por el nombre ni lo que diga el cliente)."""
+    if datos[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    if datos[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image/png'
+    if datos[:4] == b'RIFF' and datos[8:12] == b'WEBP':
+        return 'image/webp'
+    return None
+
+
+@api_view(['POST', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def mi_foto(request):
+    """POST (multipart, campo `foto`): sube o reemplaza mi foto. DELETE: la quita.
+    Devuelve el usuario actualizado."""
+    if request.method == 'DELETE':
+        FotoPerfil.objects.filter(usuario=request.user).delete()
+        return Response(UsuarioSerializer(request.user).data)
+
+    archivo = request.FILES.get('foto')
+    if not archivo:
+        return Response({'error': 'Selecciona una foto.'}, status=400)
+    if archivo.size > MAX_FOTO_PERFIL_BYTES:
+        return Response({'error': 'La foto es demasiado pesada. Elige una más pequeña.'}, status=400)
+    datos = archivo.read()
+    tipo = _tipo_imagen(datos)
+    if not tipo:
+        return Response({'error': 'Formato no permitido. Usa JPG, PNG o WEBP.'}, status=400)
+    FotoPerfil.objects.update_or_create(usuario=request.user, defaults={'contenido': datos, 'tipo': tipo})
+    return Response(UsuarioSerializer(request.user).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@throttle_classes([CambioPasswordThrottle])
+def cambiar_password(request):
+    """Cambia MI contraseña pidiendo la actual. Cierra las demás sesiones de la cuenta
+    (invalida sus tokens de renovación) y devuelve tokens nuevos para esta sesión."""
+    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
+    user = request.user
+    actual = request.data.get('password_actual') or ''
+    nueva = request.data.get('password_nueva') or ''
+    confirmar = request.data.get('confirmar_password')
+    if not user.check_password(actual):
+        return Response({'error': 'La contraseña actual es incorrecta.'}, status=400)
+    if len(nueva) < 8:
+        return Response({'error': 'La nueva contraseña debe tener al menos 8 caracteres.'}, status=400)
+    if confirmar is not None and nueva != confirmar:
+        return Response({'error': 'Las contraseñas nuevas no coinciden.'}, status=400)
+    if user.check_password(nueva):
+        return Response({'error': 'La nueva contraseña debe ser distinta a la actual.'}, status=400)
+    user.set_password(nueva)
+    user.save(update_fields=['password'])
+    for t in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=t)
+    refresh = RefreshToken.for_user(user)
+    return Response({'mensaje': 'Contraseña actualizada. Se cerró tu sesión en otros dispositivos.',
+                     'access': str(refresh.access_token), 'refresh': str(refresh)})
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def tour_completado_view(request):
@@ -474,13 +544,27 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     permission_classes = [EsAdminOPermisoEdicion]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # foto_actualizada trae solo la fecha de la foto (no la imagen) para marcar quién tiene foto
+        qs = super().get_queryset().annotate(foto_actualizada=F('foto_perfil__actualizada'))
         if self.request.user.rol == 'cliente':
             qs = qs.filter(id=self.request.user.id)
         rol = self.request.query_params.get('rol')
         if rol:
             qs = qs.filter(rol=rol)
         return qs
+
+    @action(detail=True, methods=['get'])
+    def foto(self, request, pk=None):
+        """Foto de perfil. Requiere sesión (por eso el frontend la pide con el token, como las evidencias).
+        Los clientes solo pueden ver la suya; el personal (coordinador/admin) ve la de todos."""
+        usuario = self.get_object()
+        foto = FotoPerfil.objects.filter(usuario=usuario).first()
+        if not foto:
+            raise Http404
+        resp = HttpResponse(bytes(foto.contenido), content_type=foto.tipo)
+        resp['Cache-Control'] = 'private, max-age=86400'   # la URL lleva ?v=<versión>, así que se renueva sola
+        resp['X-Content-Type-Options'] = 'nosniff'
+        return resp
 
     def _bloquear_permiso_si_no_admin(self, request):
         # Solo el Administrador puede otorgar/revocar el permiso de edición
