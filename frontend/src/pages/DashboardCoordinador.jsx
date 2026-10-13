@@ -53,7 +53,7 @@ export default function DashboardCoordinador() {
   const formatFecha = f => new Date(f).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
   const tabs = [
-    ['tickets',     '📋 Mis Tickets'],
+    ['tickets',     '📋 Tickets'],
     ['solicitudes', `🔔 Solicitudes${solicitudes.length > 0 ? ` (${solicitudes.length})` : ''}`],
   ]
 
@@ -97,16 +97,16 @@ export default function DashboardCoordinador() {
             {tabActivo === 'tickets' && (
               <div className="card" style={{ padding: 0 }}>
                 <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #f3f4f6' }}>
-                  <h2 className="card-title">Tickets asignados</h2>
+                  <h2 className="card-title">Mis tickets y solicitudes en espera</h2>
                 </div>
                 <div className="table-wrap">
                   <table>
                     <thead><tr><th>Ticket</th><th>Empresa</th><th>Fecha</th><th>Estatus</th><th>Unidad</th><th>Lugar</th><th>Tipo</th><th>Técnico / Coord.</th><th>Total</th><th>IVA</th><th>Factura</th><th>Ver</th></tr></thead>
                     <tbody>
-                      {!data?.tickets?.length && <tr><td colSpan={11} style={{ textAlign: 'center', color: '#9ca3af', padding: '2rem' }}>Sin tickets asignados</td></tr>}
+                      {!data?.tickets?.length && <tr><td colSpan={11} style={{ textAlign: 'center', color: '#9ca3af', padding: '2rem' }}>Sin tickets</td></tr>}
                       {data?.tickets?.map(t => (
                         <tr key={t.id}>
-                          <td className="td-link">{t.ticket_id}</td>
+                          <td className="td-link">{t.etiqueta || t.ticket_id}</td>
                           <td>{t.empresa}</td>
                           <td>{t.fecha}</td>
                           <td><span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span></td>

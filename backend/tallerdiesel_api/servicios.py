@@ -1,0 +1,154 @@
+"""Reglas de negocio de tickets y coordinadores (asignación, cola de espera y cambios de rol).
+
+Están aquí, y no en views.py, para poder usarlas desde varios lugares (vistas, serializers) y probarlas solas.
+"""
+import math
+
+from django.conf import settings
+
+from .models import ComentarioTicket, Notificacion, Ticket, Usuario
+
+
+# ── Quién puede editar un ticket ──────────────────────────────────────────────
+
+def puede_gestionar_ticket(user, ticket):
+    """¿Puede este usuario EDITAR el ticket (datos, técnico, solicitar finalización…)?
+
+    - Coordinador: solo el coordinador asignado. Si el ticket aún no tiene coordinador, cualquiera puede
+      tomarlo (al guardar, se queda con él).
+    - Administrador: solo lectura, salvo que se active ADMIN_PUEDE_EDITAR_TICKETS.
+    - Cliente: no edita (sus acciones propias —comentar, confirmar finalización, calificar— van aparte).
+    """
+    if not (user and getattr(user, 'is_authenticated', False)) or ticket.eliminado:
+        return False
+    if user.rol == 'coordinador':
+        return ticket.coordinador_id is None or ticket.coordinador_id == user.id
+    if user.rol == 'admin':
+        return bool(getattr(settings, 'ADMIN_PUEDE_EDITAR_TICKETS', False))
+    return False
+
+
+# ── Asignar un ticket a un coordinador ────────────────────────────────────────
+
+def _comentario_sistema(ticket, autor, texto):
+    ComentarioTicket.objects.create(
+        ticket=ticket, autor=autor, autor_nombre=autor.nombre_completo if autor else 'Sistema', texto=texto)
+
+
+def avisar_coordinador_asignado(ticket, coordinador):
+    """Avisa al cliente (campana + correo) quién coordina ahora su servicio."""
+    if not ticket.cliente_id:
+        return
+    Notificacion.objects.create(
+        destinatario=ticket.cliente,
+        titulo='Un coordinador tomó tu servicio',
+        mensaje=f'{coordinador.nombre_completo} ahora coordina tu ticket {ticket.etiqueta}.',
+        tipo='coordinador_asignado', referencia_id=ticket.id,
+    )
+    if ticket.cliente.email:
+        try:
+            from .emails import enviar_html, email_nuevo_comentario
+            url = f'{settings.FRONTEND_URL}/cliente/dashboard'
+            enviar_html(
+                asunto=f'🧑‍💼 Un coordinador tomó tu servicio — {ticket.etiqueta}',
+                destinatarios=[ticket.cliente.email],
+                html_body=email_nuevo_comentario(coordinador.nombre_completo, 'coordinador', ticket.etiqueta,
+                                                 f'{coordinador.nombre_completo} tomó tu servicio y ahora le da seguimiento personal.', url),
+                text_body=f'{coordinador.nombre_completo} tomó tu servicio {ticket.etiqueta} y ahora le da seguimiento. Ingresa al sistema: {url}',
+            )
+        except Exception as e:  # el correo nunca debe tumbar la asignación
+            print(f'⚠️  Error enviando correo de coordinador asignado: {e}')
+
+
+def reclamar_ticket(ticket, coordinador, automatico=False):
+    """Asigna el ticket a `coordinador` SOLO si sigue sin coordinador. Si dos coordinadores lo intentan a la
+    vez, gana uno y al otro devuelve False. Al asignarlo se genera su folio consecutivo."""
+    filas = Ticket.objects.filter(pk=ticket.pk, coordinador__isnull=True, eliminado=False).update(coordinador=coordinador)
+    if not filas:
+        return False
+    ticket.refresh_from_db()
+    ticket.asignar_folio()                     # folio consecutivo (TD001, TD002…) al asignarlo
+    try:                                       # la solicitud ya no queda "pendiente" para los demás coordinadores
+        solicitud = ticket.solicitud_origen
+        if not solicitud.atendida:
+            solicitud.atendida = True
+            solicitud.save(update_fields=['atendida'])
+    except Exception:
+        pass
+    if automatico:
+        _comentario_sistema(ticket, None, f'{coordinador.nombre_completo} recibió este ticket automáticamente '
+                                          'al finalizar su servicio anterior.')
+    else:
+        _comentario_sistema(ticket, coordinador, f'{coordinador.nombre_completo} tomó este servicio como coordinador.')
+    avisar_coordinador_asignado(ticket, coordinador)
+    return True
+
+
+def asignar_siguiente_en_espera(coordinador):
+    """Cuando el coordinador finaliza un ticket, recibe el siguiente en espera: la solicitud más antigua
+    que sigue pendiente y sin coordinador. Devuelve el ticket asignado o None."""
+    if not coordinador or coordinador.rol != 'coordinador' or not coordinador.is_active:
+        return None
+    en_espera = Ticket.objects.filter(
+        eliminado=False, coordinador__isnull=True, estatus='pendiente', tipo_solicitud='coordinador',
+    ).order_by('fecha_creacion', 'id')
+    for candidato in en_espera[:5]:            # si otro coordinador se lo gana, se prueba con el siguiente
+        if reclamar_ticket(candidato, coordinador, automatico=True):
+            Notificacion.objects.create(
+                destinatario=coordinador,
+                titulo=f'📥 Se te asignó el ticket {candidato.etiqueta}',
+                mensaje=f'Era el siguiente en espera ({candidato.empresa}). Ya puedes atenderlo.',
+                tipo='ticket_asignado', referencia_id=candidato.id,
+            )
+            return candidato
+    return None
+
+
+# ── Cambio de rol de un usuario ───────────────────────────────────────────────
+
+def aplicar_cambio_de_rol(usuario, rol_anterior):
+    """Ajusta lo que depende del rol cuando el Administrador cambia el rol de alguien:
+    - El permiso de editar el sistema solo existe para coordinadores.
+    - Si deja de ser coordinador, sus tickets sin finalizar regresan a la espera (sin coordinador) y se avisa al
+      Administrador para que los reasigne. Los ya finalizados conservan su historial.
+    Los permisos se evalúan con el rol guardado en cada petición, así que el cambio aplica de inmediato."""
+    if usuario.rol != 'coordinador' and usuario.puede_editar_sistema:
+        usuario.puede_editar_sistema = False
+        usuario.save(update_fields=['puede_editar_sistema'])
+
+    if rol_anterior == 'coordinador' and usuario.rol != 'coordinador':
+        pendientes = list(Ticket.objects.filter(coordinador=usuario, eliminado=False).exclude(estatus='terminado'))
+        for t in pendientes:
+            Ticket.objects.filter(pk=t.pk).update(coordinador=None)
+            _comentario_sistema(t, None, f'{usuario.nombre_completo} dejó de ser coordinador: el ticket quedó sin coordinador.')
+        if pendientes:
+            for admin in Usuario.objects.filter(rol='admin', is_active=True):
+                Notificacion.objects.create(
+                    destinatario=admin,
+                    titulo=f'{len(pendientes)} ticket(s) quedaron sin coordinador',
+                    mensaje=f'{usuario.nombre_completo} dejó de ser coordinador. Reasigna sus tickets sin finalizar.',
+                    tipo='cambio_estatus', referencia_id=pendientes[0].id,
+                )
+
+
+# ── Geolocalización ───────────────────────────────────────────────────────────
+
+def distancia_km(lat1, lon1, lat2, lon2):
+    """Distancia en km entre dos coordenadas (fórmula de Haversine)."""
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = p2 - p1
+    dlmb = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def coordenada_valida(lat, lng):
+    """Convierte a float y valida rango; devuelve (lat, lng) o None."""
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180) or (math.isnan(lat) or math.isnan(lng)):
+        return None
+    return lat, lng

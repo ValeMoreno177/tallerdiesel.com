@@ -144,7 +144,7 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 720 }} onClick={e => e.stopPropagation()}>
-        <h3 className="modal-title">{esNuevo ? '➕ Agregar nuevo servicio' : `Editar ticket ${ticket.ticket_id}`}</h3>
+        <h3 className="modal-title">{esNuevo ? '➕ Agregar nuevo servicio' : `Editar ticket ${ticket.etiqueta || ticket.ticket_id}`}</h3>
         <p className="modal-subtitle">Los totales se calculan automáticamente</p>
 
         {esTerminado && (
@@ -322,7 +322,7 @@ function ModalEliminar({ ticket, onClose, onDeleted }) {
         <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>🗑️</div>
         <h3 className="modal-title">¿Eliminar ticket?</h3>
         <p style={{ color: '#6b7280', margin: '0.5rem 0 1.5rem', fontSize: '0.875rem' }}>
-          Se eliminará <strong>{ticket.ticket_id}</strong> — {ticket.empresa}. Esta acción no se puede deshacer.
+          Se eliminará <strong>{ticket.etiqueta || ticket.ticket_id}</strong> — {ticket.empresa}. Esta acción no se puede deshacer.
         </p>
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
@@ -473,7 +473,7 @@ export default function BitacoraPage({ rol }) {
 
   const filtrados = tickets.filter(t => {
     const matchBusqueda =
-      (t.ticket_id || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+      (t.etiqueta || t.ticket_id || '').toLowerCase().includes(busqueda.toLowerCase()) ||
       (t.empresa   || '').toLowerCase().includes(busqueda.toLowerCase()) ||
       (t.unidad    || '').toLowerCase().includes(busqueda.toLowerCase())
     const matchTipo = tipoFiltro === 'todos' || (t.tipo_solicitud || 'coordinador') === tipoFiltro
@@ -546,7 +546,7 @@ export default function BitacoraPage({ rol }) {
                     )}
                     {papeleraTickets.map(t => (
                       <tr key={t.id}>
-                        <td>{t.ticket_id}</td>
+                        <td>{t.etiqueta || t.ticket_id}</td>
                         <td>{t.empresa}</td>
                         <td>{t.fecha}</td>
                         <td><span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span></td>
@@ -635,7 +635,7 @@ export default function BitacoraPage({ rol }) {
                   )}
                   {filtrados.map(t => (
                     <tr key={t.id} style={{ opacity: t.estatus === 'terminado' ? 0.8 : 1 }}>
-                      <td className="td-link col-sticky-1" onClick={() => openModal('detalle', t)}>{t.ticket_id}</td>
+                      <td className="td-link col-sticky-1" onClick={() => openModal('detalle', t)}>{t.etiqueta || t.ticket_id}</td>
                       <td className="col-sticky-2">{t.empresa}</td>
                       <td className="col-sticky-3">{t.fecha}</td>
                       <td className="col-sticky-4">
@@ -670,11 +670,13 @@ export default function BitacoraPage({ rol }) {
                       <td>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button className="btn btn-sm btn-ghost" title="Ver" onClick={() => openModal('detalle', t)}>👁</button>
-                          {(t.estatus !== 'terminado' || t.puede_editar_coordinador) && (
+                          {t.puede_editar && (t.estatus !== 'terminado' || t.puede_editar_coordinador) && (
                             <button className="btn btn-sm btn-ghost" title="Editar" onClick={() => openModal('editar', t)}>✏️</button>
                           )}
-                          <button className="btn btn-sm btn-ghost" title="Eliminar" style={{ color: '#dc2626' }}
-                            onClick={() => openModal('eliminar', t)}>🗑️</button>
+                          {(rol === 'admin' || (rol === 'coordinador' && t.coordinador === user?.id)) && (
+                            <button className="btn btn-sm btn-ghost" title="Eliminar" style={{ color: '#dc2626' }}
+                              onClick={() => openModal('eliminar', t)}>🗑️</button>
+                          )}
                         </div>
                       </td>
                     </tr>

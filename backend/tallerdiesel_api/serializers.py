@@ -69,11 +69,16 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
+        rol_anterior = instance.rol
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if password:
             instance.set_password(password)
         instance.save()
+        if instance.rol != rol_anterior:
+            # Permisos y tickets que dependen del rol (ver servicios.aplicar_cambio_de_rol)
+            from .servicios import aplicar_cambio_de_rol
+            aplicar_cambio_de_rol(instance, rol_anterior)
         return instance
 
 
@@ -171,6 +176,10 @@ class TicketSerializer(serializers.ModelSerializer):
     evidencias  = EvidenciaTicketSerializer(many=True, read_only=True)
     # Calificación del cliente (estrellas al técnico y al servicio)
     calificado          = serializers.SerializerMethodField()
+    # ¿Quien consulta puede editar este ticket? (coordinador asignado; otros roles, solo lectura)
+    puede_editar        = serializers.SerializerMethodField()
+    # Folio, o «Solicitud #n» mientras el ticket espera coordinador
+    etiqueta            = serializers.ReadOnlyField()
     puede_calificar     = serializers.SerializerMethodField()
     calificacion_detalle = serializers.SerializerMethodField()
 
@@ -194,6 +203,11 @@ class TicketSerializer(serializers.ModelSerializer):
         # Se usa .all() (no .first()) para aprovechar el prefetch_related('opinion') del viewset.
         ops = list(obj.opinion.all())
         return ops[0] if ops else None
+
+    def get_puede_editar(self, obj):
+        from .servicios import puede_gestionar_ticket
+        request = self.context.get('request')
+        return puede_gestionar_ticket(getattr(request, 'user', None), obj)
 
     def get_calificado(self, obj):
         return self._opinion(obj) is not None
@@ -248,7 +262,7 @@ class SolicitudServicioSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_ticket_codigo(self, obj):
-        return obj.ticket.ticket_id if obj.ticket else None
+        return obj.ticket.etiqueta if obj.ticket else None
 
     def get_ticket_id_obj(self, obj):
         return obj.ticket.id if obj.ticket else None

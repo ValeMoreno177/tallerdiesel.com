@@ -114,7 +114,7 @@ function TicketCard({ t, onUpdated }) {
     <div className="card" id={`ticket-${t.id}`}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
         <div>
-          <span style={{ fontFamily: 'Bebas Neue', fontSize: '1.2rem', letterSpacing: 1 }}>{t.ticket_id}</span>
+          <span style={{ fontFamily: 'Bebas Neue', fontSize: '1.2rem', letterSpacing: 1 }}>{t.ticket_id || 'Por asignar'}</span>
           <span style={{ color: '#6b7280', fontSize: '0.85rem', marginLeft: 10 }}>
             {t.tipo_unidad ? `${t.tipo_unidad} — ` : ''}{t.unidad} • {t.lugar || 'Sin ubicación'}
           </span>

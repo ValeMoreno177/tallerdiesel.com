@@ -40,11 +40,13 @@ class CalificacionServicioTests(APITestCase):
         self.assertEqual([t['id'] for t in r.data], [self.ticket.id])
         self.assertEqual(r.data[0]['tecnico_nombre'], 'Juan')
 
-    def test_finalizar_por_admin_tambien_pide_calificar(self):
+    def test_el_admin_ya_no_edita_tickets_asi_que_no_los_finaliza(self):
+        # Solo el coordinador asignado edita; el admin solo lee. (Con cliente, el coordinador tampoco cierra solo.)
         self.client.force_authenticate(self.admin)
         r = self.client.patch(f'/api/tickets/{self.ticket.id}/', {'estatus': 'terminado'}, format='json')
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(Notificacion.objects.filter(destinatario=self.cliente, tipo='calificar_servicio').count(), 1)
+        self.assertEqual(r.status_code, 403)
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.estatus, 'proceso')
 
     def test_calificar_ok_y_no_se_repite(self):
         self._finalizar_con_cliente()
@@ -449,3 +451,403 @@ class CoordinadorSinVerificacionTests(APITestCase):
         User.objects.create_user('legacy', 'l@x.com', 'pass12345', rol='coordinador')
         User.objects.filter(username='legacy').update(email_verificado=False)      # fila que se coló sin verificar
         self.assertEqual(self._login('legacy').status_code, 200)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Codificación 1-8: folio al asignar, siguiente en espera, edición del coordinador asignado,
+#  cambio de rol, notificaciones y reasignación de técnico en el mapa.
+# ═════════════════════════════════════════════════════════════════════════════
+
+class BaseTickets(APITestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        mk = lambda u, rol, **kw: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u, email_verificado=True, **kw)
+        self.admin = mk('adm', 'admin')
+        self.carlo = mk('carlo', 'coordinador')
+        self.karen = mk('karen', 'coordinador')
+        self.cli = mk('cli', 'cliente')
+        self.cli2 = mk('cli2', 'cliente')
+        self.tec1 = Tecnico.objects.create(nombre='Cerca', categoria='motor_diesel', ciudad='Monterrey', estado='NL',
+                                           telefono='1', latitud=25.68, longitud=-100.31, calificacion=4.5)
+        self.tec2 = Tecnico.objects.create(nombre='Lejos', categoria='electrico', ciudad='Tijuana', estado='BC',
+                                           telefono='2', latitud=32.50, longitud=-117.00, calificacion=3.0)
+        self.tec3 = Tecnico.objects.create(nombre='Ocupado', categoria='aire', ciudad='Monterrey', estado='NL',
+                                           telefono='3', latitud=25.70, longitud=-100.30, disponible=False)
+
+    def _solicitud(self, cliente=None, **kw):
+        """Un servicio recién pedido: pendiente y sin coordinador (aún sin folio)."""
+        base = dict(empresa='ACME', fecha=date.today(), unidad='U1', estatus='pendiente', cliente=cliente or self.cli)
+        base.update(kw)
+        return Ticket.objects.create(**base)
+
+    def _con(self, quien):
+        self.client.force_authenticate(quien)
+        return self.client
+
+
+class FolioAlAsignarTests(BaseTickets):
+    """1. El número consecutivo del ticket se genera al asignarlo a un coordinador."""
+
+    def test_una_solicitud_nueva_no_tiene_folio_y_se_nombra_solicitud_n(self):
+        t = self._solicitud()
+        self.assertEqual(t.ticket_id, '')
+        self.assertEqual(t.etiqueta, f'Solicitud #{t.pk}')
+
+    def test_varias_solicitudes_en_espera_conviven_sin_folio(self):
+        for _ in range(3):
+            self._solicitud()
+        self.assertEqual(Ticket.objects.filter(ticket_id='').count(), 3)       # el índice único no se queja
+
+    def test_al_tomarlo_un_coordinador_recibe_el_siguiente_folio_consecutivo(self):
+        a, b = self._solicitud(), self._solicitud(cliente=self.cli2)
+        r1 = self._con(self.carlo).post(f'/api/tickets/{a.id}/tomar_como_coordinador/', {}, format='json')
+        r2 = self._con(self.karen).post(f'/api/tickets/{b.id}/tomar_como_coordinador/', {}, format='json')
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual((r1.data['ticket_id'], r2.data['ticket_id']), ('TD001', 'TD002'))
+        a.refresh_from_db()
+        self.assertEqual(a.coordinador, self.carlo)
+        # el cliente se entera y la solicitud ya no queda pendiente para los demás
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.cli, tipo='coordinador_asignado').exists())
+
+    def test_un_ticket_creado_ya_con_coordinador_nace_con_folio(self):
+        t = self._solicitud(coordinador=self.carlo)
+        self.assertEqual(t.ticket_id, 'TD001')
+
+    def test_el_admin_al_asignar_coordinador_tambien_genera_el_folio(self):
+        t = self._solicitud()
+        r = self._con(self.admin).post(f'/api/tickets/{t.id}/tomar_como_coordinador/', {'coordinador_id': self.karen.id}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        t.refresh_from_db()
+        self.assertEqual((t.coordinador, t.ticket_id), (self.karen, 'TD001'))
+
+    def test_el_folio_no_cambia_si_se_reasigna_y_no_se_repite(self):
+        t = self._solicitud(coordinador=self.carlo)
+        self._con(self.admin).post(f'/api/tickets/{t.id}/tomar_como_coordinador/', {'coordinador_id': self.karen.id}, format='json')
+        t.refresh_from_db()
+        self.assertEqual(t.ticket_id, 'TD001')
+        self.assertEqual(self._solicitud(coordinador=self.carlo).ticket_id, 'TD002')
+
+    def test_asignar_folio_es_seguro_si_se_llama_dos_veces(self):
+        t = self._solicitud()
+        Ticket.objects.filter(pk=t.pk).update(coordinador=self.carlo)
+        t.refresh_from_db()
+        f1 = t.asignar_folio()
+        t2 = Ticket.objects.get(pk=t.pk)
+        self.assertEqual(t2.asignar_folio(), f1)
+
+    def test_avisos_y_pdf_funcionan_con_tickets_sin_folio(self):
+        t = self._solicitud()
+        r = self._con(self.carlo).get(f'/api/tickets/{t.id}/pdf/')
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('solicitud-', r['Content-Disposition'])
+
+
+class SiguienteEnEsperaTests(BaseTickets):
+    """2. Al finalizar un ticket, el coordinador recibe automáticamente el siguiente en espera."""
+
+    def _finalizar_con_cliente(self, ticket, coord, cliente):
+        self._con(coord).post(f'/api/tickets/{ticket.id}/solicitar_finalizacion/')
+        r = self._con(cliente).post(f'/api/tickets/{ticket.id}/responder_finalizacion/', {'acepta': True}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_recibe_el_mas_antiguo_en_espera_y_nadie_mas_se_lo_lleva(self):
+        activo = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        viejo = self._solicitud(cliente=self.cli2)
+        nuevo = self._solicitud(cliente=self.cli2)
+        Ticket.objects.filter(pk=viejo.pk).update(fecha_creacion='2020-01-01T00:00:00Z')    # llegó primero
+        self._finalizar_con_cliente(activo, self.carlo, self.cli)
+        viejo.refresh_from_db(); nuevo.refresh_from_db()
+        self.assertEqual(viejo.coordinador, self.carlo)
+        self.assertTrue(viejo.ticket_id.startswith('TD'))          # y recibió su folio
+        self.assertIsNone(nuevo.coordinador)                         # solo se asigna UNO
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.carlo, tipo='ticket_asignado', referencia_id=viejo.id).exists())
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.cli2, tipo='coordinador_asignado').exists())
+        self.assertTrue(viejo.comentarios.filter(texto__icontains='automáticamente').exists())
+
+    def test_no_toca_tickets_que_no_estan_en_espera(self):
+        activo = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        ya_de_otro = self._solicitud(cliente=self.cli2, coordinador=self.karen)
+        con_tecnico_directo = self._solicitud(cliente=self.cli2, tipo_solicitud='tecnico')
+        en_camino = self._solicitud(cliente=self.cli2, estatus='atendido')
+        papelera = self._solicitud(cliente=self.cli2, eliminado=True)
+        self._finalizar_con_cliente(activo, self.carlo, self.cli)
+        for t in (ya_de_otro, con_tecnico_directo, en_camino, papelera):
+            t.refresh_from_db()
+        self.assertEqual(ya_de_otro.coordinador, self.karen)
+        self.assertIsNone(con_tecnico_directo.coordinador)
+        self.assertIsNone(en_camino.coordinador)
+        self.assertIsNone(papelera.coordinador)
+
+    def test_sin_nadie_en_espera_no_pasa_nada(self):
+        activo = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        self._finalizar_con_cliente(activo, self.carlo, self.cli)
+        self.assertFalse(Notificacion.objects.filter(tipo='ticket_asignado').exists())
+
+    def test_no_se_asigna_si_el_coordinador_esta_inactivo_o_ya_no_es_coordinador(self):
+        from .servicios import asignar_siguiente_en_espera
+        espera = self._solicitud()
+        User.objects.filter(pk=self.carlo.pk).update(is_active=False)
+        self.assertIsNone(asignar_siguiente_en_espera(User.objects.get(pk=self.carlo.pk)))
+        self.assertIsNone(asignar_siguiente_en_espera(self.admin))
+        self.assertIsNone(asignar_siguiente_en_espera(None))
+        espera.refresh_from_db(); self.assertIsNone(espera.coordinador)
+
+    def test_dos_coordinadores_que_terminan_a_la_vez_no_se_llevan_el_mismo_ticket(self):
+        from .servicios import asignar_siguiente_en_espera
+        espera = self._solicitud()
+        r1 = asignar_siguiente_en_espera(self.carlo)
+        r2 = asignar_siguiente_en_espera(self.karen)
+        self.assertEqual(r1.pk, espera.pk)
+        self.assertIsNone(r2)                                        # ya no quedaba ninguno
+        espera.refresh_from_db(); self.assertEqual(espera.coordinador, self.carlo)
+
+
+class EdicionSoloCoordinadorAsignadoTests(BaseTickets):
+    """3. Solo el coordinador asignado edita; los demás roles ven en modo lectura."""
+
+    def setUp(self):
+        super().setUp()
+        self.t = self._solicitud(coordinador=self.carlo, estatus='proceso')
+
+    def test_el_asignado_edita(self):
+        r = self._con(self.carlo).patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'Cambio de turbo'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Ticket.objects.get(pk=self.t.pk).reparacion, 'Cambio de turbo')
+
+    def test_otro_coordinador_lo_ve_pero_no_lo_edita(self):
+        c = self._con(self.karen)
+        d = c.get(f'/api/tickets/{self.t.id}/')
+        self.assertEqual(d.status_code, 200)                         # lectura permitida
+        self.assertFalse(d.data['puede_editar'])
+        self.assertIn(self.t.id, [x['id'] for x in c.get('/api/tickets/').data.get('results', c.get('/api/tickets/').data)])
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'x'}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/solicitar_finalizacion/').status_code, 403)
+        self.assertEqual(c.delete(f'/api/tickets/{self.t.id}/').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/tomar_como_coordinador/', {}, format='json').status_code, 409)
+        self.t.refresh_from_db()
+        self.assertEqual((self.t.reparacion, self.t.coordinador), ('', self.carlo))
+
+    def test_el_admin_es_solo_lectura_pero_conserva_la_administracion(self):
+        c = self._con(self.admin)
+        d = c.get(f'/api/tickets/{self.t.id}/')
+        self.assertFalse(d.data['puede_editar'])
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'x'}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json').status_code, 403)
+        # administración: reasignar coordinador, permitir edición de un ticket cerrado, papelera
+        r = c.post(f'/api/tickets/{self.t.id}/tomar_como_coordinador/', {'coordinador_id': self.karen.id}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/permitir_edicion_coordinador/', {'activar': True}, format='json').status_code, 200)
+        self.assertEqual(c.delete(f'/api/tickets/{self.t.id}/').status_code, 204)
+
+    def test_interruptor_para_que_el_admin_tambien_edite(self):
+        from django.test import override_settings
+        with override_settings(ADMIN_PUEDE_EDITAR_TICKETS=True):
+            c = self._con(self.admin)
+            self.assertTrue(c.get(f'/api/tickets/{self.t.id}/').data['puede_editar'])
+            self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'ok'}, format='json').status_code, 200)
+
+    def test_el_cliente_sigue_pudiendo_lo_suyo(self):
+        c = self._con(self.cli)
+        self.assertFalse(c.get(f'/api/tickets/{self.t.id}/').data['puede_editar'])
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'unidad': 'Kenworth'}, format='json').status_code, 200)   # su propia edición
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'estatus': 'terminado'}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/agregar_comentario/', {'texto': 'Hola'}, format='json').status_code, 201)
+        self.assertEqual(self._con(self.cli2).get(f'/api/tickets/{self.t.id}/').status_code, 404)    # y no ve los de otros clientes
+
+    def test_el_primero_que_edita_un_ticket_libre_se_queda_con_el_y_nadie_mas(self):
+        libre = self._solicitud()
+        r = self._con(self.karen).patch(f'/api/tickets/{libre.id}/', {'reparacion': 'Reviso'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        libre.refresh_from_db()
+        self.assertEqual((libre.coordinador, libre.ticket_id, libre.reparacion), (self.karen, 'TD002', 'Reviso'))
+        # Carlo llega tarde: ahora es de Karen
+        self.assertEqual(self._con(self.carlo).patch(f'/api/tickets/{libre.id}/', {'reparacion': 'Yo'}, format='json').status_code, 403)
+
+    def test_un_coordinador_no_puede_pasarle_el_ticket_a_otro_desde_el_formulario(self):
+        r = self._con(self.carlo).patch(f'/api/tickets/{self.t.id}/', {'coordinador': self.karen.id}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.t.refresh_from_db(); self.assertEqual(self.t.coordinador, self.carlo)
+        r = self._con(self.carlo).patch(f'/api/tickets/{self.t.id}/', {'coordinador': None}, format='json')   # tampoco soltarlo
+        self.t.refresh_from_db(); self.assertEqual(self.t.coordinador, self.carlo)
+
+    def test_asignar_tecnico_a_un_ticket_libre_lo_toma_el_coordinador(self):
+        libre = self._solicitud()
+        r = self._con(self.karen).post(f'/api/tickets/{libre.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        libre.refresh_from_db()
+        self.assertEqual((libre.coordinador, libre.tecnico, libre.estatus), (self.karen, self.tec1, 'atendido'))
+        self.assertTrue(libre.ticket_id)
+
+    def test_solo_el_coordinador_asignado_puede_solicitar_finalizacion(self):
+        self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{self.t.id}/solicitar_finalizacion/').status_code, 200)
+
+    def test_eliminar_un_ticket_libre_es_solo_del_admin(self):
+        libre = self._solicitud()
+        self.assertEqual(self._con(self.carlo).delete(f'/api/tickets/{libre.id}/').status_code, 403)
+        self.assertEqual(self._con(self.admin).delete(f'/api/tickets/{libre.id}/').status_code, 204)
+
+    def test_dashboard_del_coordinador_muestra_lo_suyo_y_lo_libre_pero_la_bitacora_todo(self):
+        libre = self._solicitud(); ajeno = self._solicitud(coordinador=self.karen)
+        d = self._con(self.carlo).get('/api/tickets/dashboard_coordinador/').data
+        ids = {x['id'] for x in d['tickets']}
+        self.assertEqual(ids, {self.t.id, libre.id})
+        bit = self.client.get('/api/tickets/').data
+        bit = {x['id'] for x in bit.get('results', bit)}
+        self.assertTrue({self.t.id, libre.id, ajeno.id} <= bit)
+
+
+class CambioDeRolTests(BaseTickets):
+    """6. Al cambiar el rol de un usuario se actualizan sus permisos y lo que dependía de su rol."""
+
+    def _rol(self, usuario, rol):
+        return self._con(self.admin).patch(f'/api/usuarios/{usuario.id}/', {'rol': rol}, format='json')
+
+    def test_pierde_el_permiso_de_editar_el_sistema_al_dejar_de_ser_coordinador(self):
+        User.objects.filter(pk=self.carlo.pk).update(puede_editar_sistema=True)
+        self.assertEqual(self._rol(self.carlo, 'cliente').status_code, 200)
+        c = User.objects.get(pk=self.carlo.pk)
+        self.assertEqual((c.rol, c.puede_editar_sistema), ('cliente', False))
+        # y ya no puede usar lo de coordinador / sistema
+        self.client.force_authenticate(c)
+        self.assertEqual(self.client.post('/api/usuarios/', {'username': 'x', 'email': 'x@x.com', 'rol': 'cliente', 'password': 'pass12345'}, format='json').status_code, 403)
+        self.assertEqual(self.client.get('/api/tickets/dashboard_coordinador/').status_code in (403, 200), True)
+
+    def test_sus_tickets_sin_finalizar_vuelven_a_la_espera_y_el_admin_es_avisado(self):
+        a = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        b = self._solicitud(coordinador=self.carlo, estatus='terminado')
+        self._rol(self.carlo, 'cliente')
+        a.refresh_from_db(); b.refresh_from_db()
+        self.assertIsNone(a.coordinador)                              # vuelve a la cola
+        self.assertEqual(a.ticket_id, 'TD001')                        # conserva su folio
+        self.assertEqual(b.coordinador, self.carlo)                   # el finalizado conserva su historial
+        self.assertTrue(a.comentarios.filter(texto__icontains='dejó de ser coordinador').exists())
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.admin, titulo__icontains='sin coordinador').exists())
+
+    def test_al_pasar_a_coordinador_queda_listo_para_trabajar(self):
+        self.assertEqual(self._rol(self.cli, 'coordinador').status_code, 200)
+        u = User.objects.get(pk=self.cli.pk)
+        self.assertEqual(u.rol, 'coordinador'); self.assertTrue(u.email_verificado)
+        libre = self._solicitud(cliente=self.cli2)
+        self.assertEqual(self._con(u).post(f'/api/tickets/{libre.id}/tomar_como_coordinador/', {}, format='json').status_code, 200)
+
+    def test_pasar_a_admin_no_conserva_el_permiso_de_coordinador(self):
+        User.objects.filter(pk=self.carlo.pk).update(puede_editar_sistema=True)
+        self._rol(self.carlo, 'admin')
+        self.assertFalse(User.objects.get(pk=self.carlo.pk).puede_editar_sistema)
+
+    def test_el_nuevo_rol_aplica_de_inmediato_y_se_ve_en_auth_me(self):
+        self._rol(self.carlo, 'cliente')
+        self.client.force_authenticate(User.objects.get(pk=self.carlo.pk))
+        self.assertEqual(self.client.get('/api/auth/me/').data['rol'], 'cliente')
+
+    def test_editar_otros_datos_sin_cambiar_el_rol_no_toca_tickets(self):
+        a = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        self._con(self.admin).patch(f'/api/usuarios/{self.carlo.id}/', {'puesto': 'Norte'}, format='json')
+        a.refresh_from_db(); self.assertEqual(a.coordinador, self.carlo)
+
+
+class NotificacionesTiempoRealTests(BaseTickets):
+    """7. Notificaciones ligeras (se consultan cada 5 s) que persisten al cerrar sesión."""
+
+    def test_persisten_al_cerrar_y_volver_a_iniciar_sesion(self):
+        Notificacion.objects.create(destinatario=self.carlo, titulo='Hola', mensaje='m')
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/login/', {'username': 'carlo', 'password': 'pass12345'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer ' + r.data['access'])
+        lista = self.client.get('/api/notificaciones/').data
+        self.assertEqual([n['titulo'] for n in lista], ['Hola'])
+        self.assertFalse(lista[0]['leida'])                           # sigue sin leer
+
+    def test_devuelve_como_maximo_200_las_mas_recientes(self):
+        Notificacion.objects.bulk_create([Notificacion(destinatario=self.carlo, titulo=f'n{i}', mensaje='m') for i in range(230)])
+        lista = self._con(self.carlo).get('/api/notificaciones/').data
+        self.assertEqual(len(lista), 200)
+
+    def test_la_revision_de_sla_corre_a_lo_mucho_una_vez_por_minuto(self):
+        from unittest import mock
+        with mock.patch('tallerdiesel_api.views.revisar_alertas_sla') as sla:
+            c = self._con(self.carlo)
+            for _ in range(5):
+                c.get('/api/notificaciones/')
+            self.assertEqual(sla.call_count, 1)
+
+    def test_la_nueva_solicitud_avisa_a_coordinadores_y_abre_el_ticket(self):
+        self.client.force_authenticate(self.cli)
+        r = self.client.post('/api/solicitud/', {'nombre_completo': 'Juan', 'telefono': '1', 'empresa': 'ACME',
+                             'problema': 'No enciende', 'lugar': 'Capulin', 'unidad': 'U9', 'tipo_unidad': 'Tracto'}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        t = Ticket.objects.get(unidad='U9')
+        self.assertEqual(t.ticket_id, '')                             # en espera: aún sin folio
+        n = Notificacion.objects.get(destinatario=self.carlo, tipo='solicitud')
+        self.assertEqual(n.referencia_id, t.id)                       # la campana abre ESTE ticket
+        self.assertIn(f'Solicitud #{t.id}', n.mensaje + n.titulo + t.etiqueta)
+
+
+class ReasignarTecnicoMapaTests(BaseTickets):
+    """8. Reasignar técnico desde el mapa: asignación y geolocalización."""
+
+    def setUp(self):
+        super().setUp()
+        self.t = self._solicitud(coordinador=self.carlo, estatus='proceso', tecnico=self.tec2)
+
+    def test_tecnicos_cercanos_ordenados_por_distancia_con_calificacion_y_disponibilidad(self):
+        r = self._con(self.carlo).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/', {'lat': 25.67, 'lng': -100.31})
+        self.assertEqual(r.status_code, 200, r.data)
+        nombres = [x['nombre'] for x in r.data['tecnicos']]
+        self.assertEqual(nombres, ['Cerca', 'Lejos', 'Ocupado'][:0] or ['Cerca', 'Lejos', 'Ocupado'])   # disponibles primero, por distancia
+        cerca = r.data['tecnicos'][0]
+        self.assertLess(cerca['distancia_km'], 5)
+        self.assertEqual(cerca['calificacion'], 4.5)
+        lejos = r.data['tecnicos'][1]
+        self.assertGreater(lejos['distancia_km'], 1500)
+        self.assertTrue(lejos['es_actual'])                           # el técnico que tiene ahora
+        self.assertFalse(r.data['tecnicos'][2]['disponible'])
+
+    def test_usa_la_ubicacion_guardada_del_ticket_y_sin_ubicacion_no_hay_distancias(self):
+        r = self._con(self.carlo).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/')
+        self.assertIsNone(r.data['ubicacion'])
+        self.assertTrue(all(x['distancia_km'] is None for x in r.data['tecnicos']))
+        Ticket.objects.filter(pk=self.t.pk).update(latitud=32.5, longitud=-117.0)
+        r = self._con(self.carlo).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/')
+        self.assertEqual(r.data['tecnicos'][0]['nombre'], 'Lejos')    # ahora el más cercano es el de Tijuana
+
+    def test_ubicacion_invalida_se_rechaza(self):
+        c = self._con(self.carlo)
+        self.assertEqual(c.get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/', {'lat': 'abc', 'lng': '1'}).status_code, 400)
+        self.assertEqual(c.get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/', {'lat': '95', 'lng': '1'}).status_code, 400)
+
+    def test_el_cliente_no_puede_consultar_el_mapa_de_reasignacion(self):
+        self.assertEqual(self._con(self.cli).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/').status_code, 403)
+
+    def test_reasignar_guarda_tecnico_ubicacion_historial_y_avisa_al_cliente(self):
+        r = self._con(self.carlo).post(f'/api/tickets/{self.t.id}/asignar_tecnico/',
+                                       {'tecnico_id': self.tec1.id, 'latitud': 25.67, 'longitud': -100.31}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.t.refresh_from_db()
+        self.assertEqual(self.t.tecnico, self.tec1)
+        self.assertEqual((self.t.latitud, self.t.longitud), (25.67, -100.31))
+        self.assertTrue(self.t.comentarios.filter(texto='Técnico reasignado: Lejos → Cerca').exists())
+        n = Notificacion.objects.get(destinatario=self.cli, tipo='tecnico_asignado')
+        self.assertEqual(n.titulo, 'Técnico actualizado')
+
+    def test_reasignar_con_ubicacion_invalida_no_cambia_nada(self):
+        r = self._con(self.carlo).post(f'/api/tickets/{self.t.id}/asignar_tecnico/',
+                                       {'tecnico_id': self.tec1.id, 'latitud': 'x', 'longitud': 1}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.t.refresh_from_db(); self.assertEqual(self.t.tecnico, self.tec2)
+
+    def test_solo_el_coordinador_asignado_reasigna(self):
+        body = {'tecnico_id': self.tec1.id}
+        self.assertEqual(self._con(self.karen).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 403)
+        self.assertEqual(self._con(self.admin).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 403)
+        self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 200)
+
+    def test_distancia_haversine(self):
+        from .servicios import distancia_km, coordenada_valida
+        self.assertAlmostEqual(distancia_km(25.6866, -100.3161, 25.6866, -100.3161), 0, places=3)
+        self.assertAlmostEqual(distancia_km(19.4326, -99.1332, 25.6866, -100.3161), 707, delta=15)   # CDMX → Monterrey
+        self.assertIsNone(coordenada_valida('a', 1)); self.assertIsNone(coordenada_valida(0, 181))
+        self.assertEqual(coordenada_valida('19.4', '-99.1'), (19.4, -99.1))

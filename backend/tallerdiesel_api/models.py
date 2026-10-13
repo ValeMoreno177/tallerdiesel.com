@@ -154,13 +154,18 @@ class Ticket(models.Model):
     ]
     EST_FACTURA_CHOICES = [('pagada','Pagada'),('pendiente','Pendiente')]
 
-    ticket_id  = models.CharField(max_length=20, blank=True)  # único solo entre los NO eliminados (ver Meta)
+    # Folio consecutivo (TD001, TD002…). Se genera cuando el ticket se asigna a un coordinador; mientras
+    # está en espera queda vacío. Único solo entre los NO eliminados (ver Meta).
+    ticket_id  = models.CharField(max_length=20, blank=True)
     empresa    = models.CharField(max_length=200)
     fecha      = models.DateField()
     estatus    = models.CharField(max_length=20, choices=ESTATUS_CHOICES, default='pendiente')
     tipo_unidad= models.CharField(max_length=200, blank=True)
     unidad     = models.CharField(max_length=200)
     lugar      = models.CharField(max_length=200, blank=True)
+    # Ubicación del servicio en el mapa (la fija el coordinador al asignar técnico)
+    latitud    = models.FloatField(null=True, blank=True)
+    longitud   = models.FloatField(null=True, blank=True)
     operador   = models.CharField(max_length=200, blank=True)
     reparacion = models.TextField(blank=True)
 
@@ -208,22 +213,54 @@ class Ticket(models.Model):
     class Meta:
         ordering = ['-fecha_creacion']
         constraints = [
-            models.UniqueConstraint(fields=['ticket_id'], condition=models.Q(eliminado=False),
+            models.UniqueConstraint(fields=['ticket_id'],
+                                     condition=models.Q(eliminado=False) & ~models.Q(ticket_id=''),
                                      name='ticket_id_unico_entre_activos'),
         ]
 
     def __str__(self):
-        return f'{self.ticket_id} - {self.empresa}'
+        return f'{self.etiqueta} - {self.empresa}'
+
+    @property
+    def etiqueta(self):
+        """Cómo nombrar al ticket en avisos y correos: su folio, o «Solicitud #n» mientras espera coordinador."""
+        return self.ticket_id or f'Solicitud #{self.pk}'
+
+    @staticmethod
+    def _siguiente_folio():
+        import re
+        max_num = 0
+        for tid in Ticket.objects.filter(eliminado=False).exclude(ticket_id='').values_list('ticket_id', flat=True):
+            m = re.match(r'TD(\d+)$', tid)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+        return f'TD{max_num + 1:03d}'
+
+    def asignar_folio(self):
+        """Le pone el siguiente folio consecutivo si aún no lo tiene (se llama al asignarlo a un coordinador).
+        Seguro ante dos asignaciones a la vez: si el folio ya lo tomó otro ticket, reintenta con el siguiente."""
+        from django.db import IntegrityError, transaction
+        if self.ticket_id:
+            return self.ticket_id
+        for _ in range(10):
+            folio = self._siguiente_folio()
+            try:
+                with transaction.atomic():
+                    filas = Ticket.objects.filter(pk=self.pk, ticket_id='').update(ticket_id=folio)
+            except IntegrityError:
+                continue
+            if filas:
+                self.ticket_id = folio
+            else:                       # otro proceso ya le puso folio a este ticket
+                self.refresh_from_db(fields=['ticket_id'])
+            return self.ticket_id
+        raise RuntimeError('No se pudo generar el folio del ticket.')
 
     def save(self, *args, **kwargs):
-        if not self.ticket_id:
-            import re
-            max_num = 0
-            for tid in Ticket.objects.filter(eliminado=False).exclude(ticket_id='').values_list('ticket_id', flat=True):
-                m = re.match(r'TD(\d+)$', tid)
-                if m:
-                    max_num = max(max_num, int(m.group(1)))
-            self.ticket_id = f'TD{max_num + 1:03d}'
+        # El folio se genera cuando el ticket tiene coordinador. Un ticket sin coordinador (solicitud en
+        # espera) no consume folio todavía.
+        if not self.ticket_id and self.coordinador_id:
+            self.ticket_id = self._siguiente_folio()
         super().save(*args, **kwargs)
 
     # ── Fórmulas (exactas al requerimiento) ──────────────────────────────────

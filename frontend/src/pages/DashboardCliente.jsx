@@ -92,7 +92,7 @@ export default function DashboardCliente() {
               )}
               {tickets.map(t => (
                 <tr key={t.id}>
-                  <td className="td-link">{t.ticket_id}</td>
+                  <td className="td-link">{t.etiqueta || t.ticket_id}</td>
                   <td>{t.unidad}</td>
                   <td>{t.lugar || '—'}</td>
                   <td>{t.fecha}</td>

@@ -132,6 +132,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'login': '10/min',
         'auth_codigo': '8/min',
+        'cambiar_password': '5/min',
     },
 }
 
@@ -198,3 +199,7 @@ DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', f'TallerDiesel <{EMAIL
 # de clientes sin coordinador asignado, etc.) — no tiene que ser la misma cuenta
 # que envía los correos. Cámbialo aquí o en la variable de entorno EMAIL_EMPRESA.
 EMAIL_EMPRESA = os.environ.get('EMAIL_EMPRESA', 'coordinador@tallerdiesel.com')
+
+# Los tickets solo los edita el coordinador asignado; los demás roles los ven en modo lectura.
+# Pon ADMIN_PUEDE_EDITAR_TICKETS=true para que el Administrador también pueda editarlos.
+ADMIN_PUEDE_EDITAR_TICKETS = os.environ.get('ADMIN_PUEDE_EDITAR_TICKETS', 'false').strip().lower() in ('1', 'true', 'yes', 'si', 'sí')

@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react'
 import api from '../api/client'
 import { useAuth } from './AuthContext'
-import useAutoRefresh from '../hooks/useAutoRefresh'
+import useAutoRefresh, { refrescarAhora } from '../hooks/useAutoRefresh'
+import { NOTIFICACIONES_MS } from '../config/tiempos'
 import Toast from '../components/Toast'
 
 // ── Sonido de notificación generado con Web Audio API (sin archivos externos) ──
@@ -30,7 +31,7 @@ export function reproducirSonido() {
 const NotificacionesContext = createContext(null)
 
 /**
- * Consulta las notificaciones del usuario cada 30 s EN TODA LA APP (no solo en las
+ * Consulta las notificaciones del usuario cada 5 s EN TODA LA APP (no solo en las
  * páginas que tienen la campana) y no depende del estatus de ningún ticket: los avisos
  * de mensajes siguen llegando aunque el servicio ya esté finalizado.
  * Cuando llega una notificación nueva suena y sale un aviso flotante.
@@ -42,6 +43,7 @@ export function NotificacionesProvider({ children }) {
   const [aviso, setAviso] = useState(null)
   const vistas = useRef(null)          // ids ya conocidos; null = aún no se hace la primera carga
   const sonidoRef = useRef(true)
+  const usuarioPrevio = useRef(null)   // para distinguir un cierre de sesión de la carga inicial
   useEffect(() => { sonidoRef.current = sonidoActivo }, [sonidoActivo])
 
   // Al cambiar de usuario (login / logout) se empieza de cero
@@ -49,10 +51,31 @@ export function NotificacionesProvider({ children }) {
     vistas.current = null
     setNotifs([])
     setAviso(null)
-  }, [user?.id])
+    // Solo al CERRAR sesión de verdad (había usuario y ya no): la próxima vez se vuelve a avisar lo pendiente.
+    // (Al recargar la página el usuario también arranca vacío un instante: eso no cuenta como cierre.)
+    if (usuarioPrevio.current && !user) {
+      try { Object.keys(sessionStorage).filter(k => k.startsWith('td_avisado_')).forEach(k => sessionStorage.removeItem(k)) } catch { /* sin storage */ }
+    }
+    usuarioPrevio.current = user?.id ?? null
+  }, [user?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const cargar = useCallback(async () => {
     const { data } = await api.get('/notificaciones/')
+    if (!vistas.current) {
+      // Primera carga tras iniciar sesión: las notificaciones viven en el servidor, así que las que llegaron
+      // mientras la sesión estaba cerrada siguen ahí. Se avisa UNA vez por inicio de sesión.
+      const sinLeer = data.filter(n => !n.leida && n.tipo !== 'calificar_servicio')
+      const clave = `td_avisado_${user?.id}`
+      if (sinLeer.length > 0 && !sessionStorage.getItem(clave)) {
+        sessionStorage.setItem(clave, '1')
+        if (sonidoRef.current) reproducirSonido()
+        setAviso({
+          id: `inicio-${sinLeer[0].id}`,
+          titulo: sinLeer.length === 1 ? sinLeer[0].titulo : `Tienes ${sinLeer.length} notificaciones sin leer`,
+          mensaje: sinLeer.length === 1 ? sinLeer[0].mensaje : sinLeer[0].titulo,
+        })
+      }
+    }
     if (vistas.current) {
       const nuevas = data.filter(n => !n.leida && !vistas.current.has(n.id))
       if (nuevas.length > 0) {
@@ -66,11 +89,16 @@ export function NotificacionesProvider({ children }) {
         }
       }
     }
+    const hayNuevas = !!vistas.current && data.some(n => !n.leida && !vistas.current.has(n.id))
     vistas.current = new Set(data.map(n => n.id))
     setNotifs(data)
-  }, [])
+    // Si llegó algo nuevo, dashboards y bitácoras se actualizan en ese mismo momento
+    // (así el aviso y los números en pantalla nunca quedan desfasados).
+    if (hayNuevas) refrescarAhora()
+  }, [user?.id])
 
-  useAutoRefresh(cargar, { activo: !!user, inmediato: true })
+  // Cada 5 s (NOTIFICACIONES_MS), aunque la pestaña esté en segundo plano
+  useAutoRefresh(cargar, { activo: !!user, inmediato: true, intervalo: NOTIFICACIONES_MS })
 
   const marcarLeida = useCallback(async (id) => {
     await api.post(`/notificaciones/${id}/leer/`)

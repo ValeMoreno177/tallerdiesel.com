@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import api from '../api/client'
 import EvidenciaBurbuja from './EvidenciaBurbuja'
 import { useAuth } from '../context/AuthContext'
-import AsignarTecnicoModal from './AsignarTecnicoModal'
+import MapaReasignarTecnicoModal from './MapaReasignarTecnicoModal'
 import ResumenCalificacion from './ResumenCalificacion'
 import { pedirCalificacion } from './CalificacionGlobal'
 import useAutoRefresh from '../hooks/useAutoRefresh'
@@ -37,11 +37,16 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const puedeComentar = true
   const bloqueado = !puedeComentar
 
-  // Admin y Coordinador pueden asignar/cambiar el técnico de un ticket que no esté finalizado.
+  // Solo el coordinador ASIGNADO edita el ticket (o cualquier coordinador si aún no tiene coordinador: lo toma
+  // al atenderlo). Para el resto de Admin/Coordinadores es solo lectura. El servidor lo manda en `puede_editar`.
+  const esStaff = user?.rol === 'admin' || user?.rol === 'coordinador'
+  const puedeEditarTicket = esStaff && localTicket.puede_editar === true
+  const soloLecturaStaff = esStaff && !puedeEditarTicket
+
+  // El coordinador asignado puede asignar/cambiar el técnico de un ticket que no esté finalizado.
   // El Cliente también puede, pero solo en su propio ticket de tipo "directo con técnico".
   const puedeAsignarTecnico = !soloLectura && (
-    user?.rol === 'admin' ||
-    (user?.rol === 'coordinador' && (!esTerminado || tienePermisoEdicion)) ||
+    (puedeEditarTicket && (!esTerminado || tienePermisoEdicion)) ||
     (user?.rol === 'cliente' && localTicket.tipo_solicitud === 'tecnico' && !esTerminado)
   )
 
@@ -49,7 +54,7 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   // cuando el cliente lo pide en un comentario), y así pasa a mostrar seguimiento por estatus.
   const [tomandoServicio, setTomandoServicio] = useState(false)
   const puedeTomarComoCoordinador = !soloLectura && user?.rol === 'coordinador' && !esTerminado
-    && localTicket.tipo_solicitud === 'tecnico' && !localTicket.coordinador_nombre
+    && !localTicket.coordinador
 
   const tomarComoCoordinador = async () => {
     setTomandoServicio(true)
@@ -133,7 +138,7 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const [finalizando, setFinalizando] = useState(false)
   const solicitudPendiente = !!localTicket.finalizacion_solicitada && !esTerminado
   const puedeSolicitarFinalizar = !soloLectura && !esTerminado && !solicitudPendiente
-    && localTicket.cliente && (user?.rol === 'coordinador' || user?.rol === 'admin')
+    && localTicket.cliente && user?.rol === 'coordinador' && localTicket.puede_editar === true
   const puedeResponderFinalizar = !soloLectura && solicitudPendiente
     && user?.rol === 'cliente' && localTicket.cliente === user.id
 
@@ -180,7 +185,7 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: 4 }}>
-                <span style={{ fontFamily: 'Bebas Neue', fontSize: '1.5rem', letterSpacing: 2 }}>{localTicket.ticket_id}</span>
+                <span style={{ fontFamily: 'Bebas Neue', fontSize: '1.5rem', letterSpacing: 2 }}>{localTicket.etiqueta || localTicket.ticket_id}</span>
                 <span className={`badge badge-${localTicket.estatus}`}>{localTicket.estatus_display || localTicket.estatus}</span>
                 {esTerminado && <span style={{ background: '#dc2626', color: 'white', fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>🔒 CERRADO</span>}
                 {esTerminado && tienePermisoEdicion && (
@@ -218,7 +223,7 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
             <div>
               <h4 style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem', color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase' }}>Información general</h4>
               {[
-                ['Folio', localTicket.ticket_id],
+                ['Folio', localTicket.etiqueta || localTicket.ticket_id],
                 ['Empresa', localTicket.empresa],
                 ['Unidad', localTicket.unidad],
                 ['Cliente', localTicket.operador || '—'],
@@ -394,6 +399,13 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
             {errorEv && (
               <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 8, padding: '6px 10px', fontSize: '0.8rem', marginTop: 6 }}>{errorEv}</div>
             )}
+            {soloLecturaStaff && (
+              <div role="note" style={{ background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', fontSize: '0.8rem', color: '#374151', marginTop: 6 }}>
+                👁 Solo lectura — {localTicket.coordinador_nombre
+                  ? `lo atiende ${localTicket.coordinador_nombre}; solo el coordinador asignado puede editarlo.`
+                  : 'solo un coordinador puede atenderlo.'}
+              </div>
+            )}
             {esTerminado && tienePermisoEdicion && user?.rol === 'coordinador' && (
               <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '8px 12px', fontSize: '0.8rem', color: '#065f46', marginTop: 6 }}>
                 ✏️ El Administrador te ha dado permiso de editar este ticket cerrado.
@@ -404,9 +416,9 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
       </div>
 
       {asignandoTecnico && (
-        <AsignarTecnicoModal
+        <MapaReasignarTecnicoModal
           ticketId={localTicket.id}
-          ticketFolio={localTicket.ticket_id}
+          ticketFolio={localTicket.etiqueta || localTicket.ticket_id}
           ticketInfo={{
             empresa: localTicket.empresa,
             lugar: localTicket.lugar,

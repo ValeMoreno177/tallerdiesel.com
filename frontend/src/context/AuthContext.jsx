@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 import api from '../api/client'
 import { CLAVE_ACTIVIDAD } from '../config/tiempos'
 
@@ -20,6 +21,18 @@ export function AuthProvider({ children }) {
       setLoading(false)
     }
   }, [])
+
+  // Cada 30 s se revisa el perfil: si el Administrador cambia el rol o los permisos de esta persona,
+  // el menú y las pantallas se ajustan solos (sin tener que cerrar sesión).
+  const refrescarPerfil = useCallback(async () => {
+    const { data } = await api.get('/auth/me/')
+    setUser(prev => {
+      if (!prev || prev.id !== data.id) return prev
+      const siguiente = { ...prev, ...data }
+      return JSON.stringify(siguiente) === JSON.stringify(prev) ? prev : siguiente
+    })
+  }, [])
+  useAutoRefresh(refrescarPerfil, { activo: !!user, soloVisible: true })
 
   const login = async (username, password) => {
     const { data } = await api.post('/auth/login/', { username, password })
@@ -47,6 +60,9 @@ export function AuthProvider({ children }) {
     setUser(null)
   }
 
+  // Actualiza los datos del usuario en pantalla (p. ej. al cambiar su foto) sin volver a iniciar sesión
+  const actualizarUsuario = (datos) => setUser(u => ({ ...u, ...datos }))
+
   const iniciarTour = () => setTourForzado(true)
 
   // Al terminar u omitir el recorrido se guarda en el servidor para no volver a mostrarlo.
@@ -59,7 +75,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, registro, loading, tourForzado, iniciarTour, terminarTour }}>
+    <AuthContext.Provider value={{ user, login, logout, registro, loading, tourForzado, iniciarTour, terminarTour, actualizarUsuario }}>
       {children}
     </AuthContext.Provider>
   )
