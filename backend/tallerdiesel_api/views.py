@@ -22,7 +22,7 @@ from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
                      Notificacion, ComentarioTicket, TokenVerificacion, ConfiguracionEmpresa,
                      CodigoRecuperacion, UnidadFlotilla, EvidenciaTicket, FotoPerfil)
 from .servicios import (puede_gestionar_ticket, reclamar_ticket, asignar_siguiente_en_espera,
-                        distancia_km, coordenada_valida)
+                        asignar_coordinador_automatico, distancia_km, coordenada_valida)
 from .emails import enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
 from .serializers import (
     UsuarioSerializer, RegistroSerializer, TicketSerializer,
@@ -1692,6 +1692,12 @@ def solicitud_servicio(request):
             autor_nombre=solicitud.nombre_completo,
             texto='Ticket generado automáticamente a partir de la solicitud de servicio.',
         )
+
+        # Reparto automático: el ticket nuevo le toca al coordinador libre que primero terminó un servicio o,
+        # si no hay, al siguiente por número (1, 2, 3…). Al asignarse recibe su folio (TD027, TD028…).
+        if ticket.coordinador_id is None:
+            asignar_coordinador_automatico(ticket)
+            ticket.refresh_from_db()
 
         # Notificar a coordinadores y admins (campana + correo)
         destinatarios = User.objects.filter(rol__in=['coordinador', 'admin'], is_active=True)

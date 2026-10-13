@@ -780,10 +780,10 @@ class NotificacionesTiempoRealTests(BaseTickets):
                              'problema': 'No enciende', 'lugar': 'Capulin', 'unidad': 'U9', 'tipo_unidad': 'Tracto'}, format='json')
         self.assertEqual(r.status_code, 201, r.data)
         t = Ticket.objects.get(unidad='U9')
-        self.assertEqual(t.ticket_id, '')                             # en espera: aún sin folio
+        self.assertEqual((t.coordinador, t.ticket_id), (self.carlo, 'TD001'))   # se asigna solo al coordinador 1, con folio
         n = Notificacion.objects.get(destinatario=self.carlo, tipo='solicitud')
         self.assertEqual(n.referencia_id, t.id)                       # la campana abre ESTE ticket
-        self.assertIn(f'Solicitud #{t.id}', n.mensaje + n.titulo + t.etiqueta)
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.carlo, tipo='ticket_asignado', referencia_id=t.id).exists())
 
 
 class ReasignarTecnicoMapaTests(BaseTickets):
@@ -851,3 +851,49 @@ class ReasignarTecnicoMapaTests(BaseTickets):
         self.assertAlmostEqual(distancia_km(19.4326, -99.1332, 25.6866, -100.3161), 707, delta=15)   # CDMX → Monterrey
         self.assertIsNone(coordenada_valida('a', 1)); self.assertIsNone(coordenada_valida(0, 181))
         self.assertEqual(coordenada_valida('19.4', '-99.1'), (19.4, -99.1))
+
+
+class AsignacionAutomaticaTests(BaseTickets):
+    """Reparto automático: por número de coordinador (1, 2, 3…) y, si alguien ya finalizó, el que terminó primero."""
+
+    def _pide_servicio(self):
+        r = self.client.post('/api/solicitud/', {'nombre_completo': 'Chofer', 'telefono': '5551234567',
+                                                 'empresa': 'ACME', 'problema': 'No arranca'}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        return Ticket.objects.get(pk=r.data['id'])
+
+    def test_cada_coordinador_tiene_su_numero(self):
+        self.assertEqual((self.carlo.numero_coordinador, self.karen.numero_coordinador), (1, 2))
+
+    def test_los_tickets_llegan_al_1_luego_al_2_y_vuelven_al_1(self):
+        a, b, c = self._pide_servicio(), self._pide_servicio(), self._pide_servicio()
+        self.assertEqual((a.coordinador, b.coordinador, c.coordinador), (self.carlo, self.karen, self.carlo))
+
+    def test_el_folio_sigue_la_serie_despues_de_TD026(self):
+        self._solicitud(coordinador=self.karen, ticket_id='TD026')
+        t = self._pide_servicio()
+        self.assertEqual(t.ticket_id, 'TD027')
+
+    def test_el_que_finalizo_primero_recibe_el_siguiente(self):
+        from .views import al_finalizar
+        a, b = self._pide_servicio(), self._pide_servicio()        # a→carlo(1), b→karen(2)
+        b.estatus = 'terminado'; b.save()
+        al_finalizar(b)                                            # karen termina primero
+        c = self._pide_servicio()
+        self.assertEqual(c.coordinador, self.karen)                # le toca a karen aunque el turno sería el de carlo
+        d = self._pide_servicio()
+        self.assertEqual(d.coordinador, self.carlo)                # ya no está libre: sigue el turno normal
+
+    def test_con_varios_libres_gana_el_que_termino_antes(self):
+        from .views import al_finalizar
+        a, b = self._pide_servicio(), self._pide_servicio()
+        for t in (b, a):                                           # termina karen y luego carlo
+            t.estatus = 'terminado'; t.save(); al_finalizar(t)
+        self.assertEqual(self._pide_servicio().coordinador, self.karen)
+        self.assertEqual(self._pide_servicio().coordinador, self.carlo)
+
+    def test_sin_coordinadores_activos_queda_en_espera_sin_folio(self):
+        User.objects.filter(rol='coordinador').update(is_active=False)
+        t = self._pide_servicio()
+        self.assertIsNone(t.coordinador)
+        self.assertEqual(t.ticket_id, '')

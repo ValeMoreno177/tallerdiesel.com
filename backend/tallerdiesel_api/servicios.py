@@ -5,8 +5,10 @@ Están aquí, y no en views.py, para poder usarlas desde varios lugares (vistas,
 import math
 
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
-from .models import ComentarioTicket, Notificacion, Ticket, Usuario
+from .models import ComentarioTicket, ConfiguracionEmpresa, Notificacion, Ticket, Usuario
 
 
 # ── Quién puede editar un ticket ──────────────────────────────────────────────
@@ -60,7 +62,7 @@ def avisar_coordinador_asignado(ticket, coordinador):
             print(f'⚠️  Error enviando correo de coordinador asignado: {e}')
 
 
-def reclamar_ticket(ticket, coordinador, automatico=False):
+def reclamar_ticket(ticket, coordinador, automatico=False, motivo=None):
     """Asigna el ticket a `coordinador` SOLO si sigue sin coordinador. Si dos coordinadores lo intentan a la
     vez, gana uno y al otro devuelve False. Al asignarlo se genera su folio consecutivo."""
     filas = Ticket.objects.filter(pk=ticket.pk, coordinador__isnull=True, eliminado=False).update(coordinador=coordinador)
@@ -75,7 +77,10 @@ def reclamar_ticket(ticket, coordinador, automatico=False):
             solicitud.save(update_fields=['atendida'])
     except Exception:
         pass
-    if automatico:
+    Usuario.objects.filter(pk=coordinador.pk).update(libre_desde=None)   # ya tiene trabajo: deja de estar libre
+    if motivo:
+        _comentario_sistema(ticket, None, motivo)
+    elif automatico:
         _comentario_sistema(ticket, None, f'{coordinador.nombre_completo} recibió este ticket automáticamente '
                                           'al finalizar su servicio anterior.')
     else:
@@ -101,7 +106,51 @@ def asignar_siguiente_en_espera(coordinador):
                 tipo='ticket_asignado', referencia_id=candidato.id,
             )
             return candidato
+    # No había nada en espera: queda libre desde ahora y será el primero en recibir el próximo servicio.
+    Usuario.objects.filter(pk=coordinador.pk).update(libre_desde=timezone.now())
     return None
+
+
+# ── Reparto automático de tickets nuevos entre coordinadores ──────────────────
+
+def _elegir_coordinador(cfg):
+    """Quién recibe el ticket nuevo (llamar con la configuración bloqueada):
+    1) Si algún coordinador ya finalizó un servicio y sigue libre, el que lleva MÁS tiempo libre.
+    2) Si no, por turno: el siguiente número después del último que recibió (1, 2, 3… y vuelve al 1)."""
+    activos = list(Usuario.objects.filter(rol='coordinador', is_active=True).order_by('numero_coordinador', 'id'))
+    if not activos:
+        return None
+    libres = [c for c in activos if c.libre_desde]
+    if libres:
+        return min(libres, key=lambda c: c.libre_desde)
+    siguiente = next((c for c in activos if (c.numero_coordinador or 0) > cfg.ultimo_turno), activos[0])
+    cfg.ultimo_turno = siguiente.numero_coordinador or 0
+    cfg.save(update_fields=['ultimo_turno'])
+    return siguiente
+
+
+def asignar_coordinador_automatico(ticket):
+    """Asigna un ticket nuevo (de tipo coordinador y aún sin coordinador) al que le toca. Al quedar asignado
+    se genera su folio consecutivo (TD027 después de TD026…). Devuelve el coordinador o None si no hay."""
+    if ticket.coordinador_id or ticket.tipo_solicitud != 'coordinador':
+        return None
+    ConfiguracionEmpresa.obtener()                       # asegura que exista el registro único
+    with transaction.atomic():
+        cfg = ConfiguracionEmpresa.objects.select_for_update().get(pk=1)   # una solicitud a la vez
+        coordinador = _elegir_coordinador(cfg)
+        if coordinador is None:
+            return None                                  # sin coordinadores activos: queda en espera
+        if not reclamar_ticket(ticket, coordinador, motivo=(
+                f'Ticket asignado automáticamente a {coordinador.nombre_completo} '
+                f'(coordinador #{coordinador.numero_coordinador}).')):
+            return None
+    Notificacion.objects.create(
+        destinatario=coordinador,
+        titulo=f'📥 Se te asignó el ticket {ticket.etiqueta}',
+        mensaje=f'Es tu turno: {ticket.empresa}. Ya puedes atenderlo.',
+        tipo='ticket_asignado', referencia_id=ticket.id,
+    )
+    return coordinador
 
 
 # ── Cambio de rol de un usuario ───────────────────────────────────────────────

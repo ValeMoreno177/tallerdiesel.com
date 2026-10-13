@@ -46,6 +46,11 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     aviso_privacidad_aceptado = models.BooleanField(default=False)
     # Recorrido guiado de bienvenida: False = usuario nuevo que aún no lo ve/omite.
     tour_completado           = models.BooleanField(default=False)
+    # Número de turno del coordinador (1, 2, 3…): los tickets nuevos se reparten en ese orden.
+    numero_coordinador        = models.PositiveIntegerField(null=True, blank=True)
+    # Desde cuándo está "libre": se marca cuando finaliza un servicio y se borra al recibir otro ticket.
+    # El que lleva más tiempo libre recibe primero el ticket nuevo.
+    libre_desde               = models.DateTimeField(null=True, blank=True)
 
     objects = UsuarioManager()
     USERNAME_FIELD  = 'username'
@@ -75,6 +80,12 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
             self.email_verificado = True
             if kwargs.get('update_fields') is not None:
                 kwargs['update_fields'] = set(kwargs['update_fields']) | {'email_verificado'}
+        # Todo coordinador tiene su número de turno: si no trae uno, recibe el siguiente disponible.
+        if self.rol == 'coordinador' and self.numero_coordinador is None:
+            ultimo = Usuario.objects.filter(rol='coordinador').aggregate(m=models.Max('numero_coordinador'))['m'] or 0
+            self.numero_coordinador = ultimo + 1
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = set(kwargs['update_fields']) | {'numero_coordinador'}
         super().save(*args, **kwargs)
 
 
@@ -116,6 +127,8 @@ class ConfiguracionEmpresa(models.Model):
     sitio_web      = models.CharField(max_length=200, blank=True)
     actualizado_en = models.DateTimeField(auto_now=True)
     actualizado_por= models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True)
+    # Número del último coordinador que recibió un ticket por turno (el siguiente es el que sigue).
+    ultimo_turno   = models.PositiveIntegerField(default=0)
 
     class Meta:
         verbose_name = 'Configuración de la empresa'

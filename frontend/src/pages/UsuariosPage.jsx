@@ -15,9 +15,11 @@ function ModalUsuario({ usuario, onClose, onSaved, viewerEsAdmin }) {
     apellido_paterno: usuario.apellido_paterno || '', apellido_materno: usuario.apellido_materno || '',
     puesto: usuario.puesto || '', rol: usuario.rol, empresa: usuario.empresa || '',
     is_active: usuario.is_active, password: '', puede_editar_sistema: usuario.puede_editar_sistema || false,
+    numero_coordinador: usuario.numero_coordinador ?? '',
   } : {
     username: '', email: '', nombre: '', apellido_paterno: '', apellido_materno: '',
     puesto: '', rol: 'coordinador', empresa: '', is_active: true, password: '', puede_editar_sistema: false,
+    numero_coordinador: '',
   })
   const [saving, setSaving] = useState(false)
 
@@ -29,6 +31,9 @@ function ModalUsuario({ usuario, onClose, onSaved, viewerEsAdmin }) {
       const payload = { ...form }
       if (!payload.password) delete payload.password
       if (!viewerEsAdmin) delete payload.puede_editar_sistema  // solo Admin otorga este permiso
+      // Número de turno: solo coordinadores; vacío = el sistema le da el siguiente disponible
+      if (payload.rol !== 'coordinador' || payload.numero_coordinador === '') delete payload.numero_coordinador
+      else payload.numero_coordinador = Number(payload.numero_coordinador)
       if (isNew) await api.post('/usuarios/', payload)
       else await api.patch(`/usuarios/${usuario.id}/`, payload)
       onSaved(); onClose()
@@ -94,6 +99,15 @@ function ModalUsuario({ usuario, onClose, onSaved, viewerEsAdmin }) {
             <label htmlFor="is_active" style={{ fontSize: '0.875rem', fontWeight: 500 }}>Usuario activo</label>
             <span className={`badge badge-${form.is_active ? 'activo' : 'inactivo'}`}>{form.is_active ? 'Activo' : 'Inactivo'}</span>
           </div>
+
+          {viewerEsAdmin && form.rol === 'coordinador' && (
+            <div className="form-group" style={{ gridColumn: '1/-1' }}>
+              <label className="form-label">Número de coordinador</label>
+              <input className="form-input" type="number" min="1" value={form.numero_coordinador}
+                onChange={e => set('numero_coordinador', e.target.value)} placeholder="Automático (el siguiente disponible)" />
+              <small style={{ color: '#6b7280' }}>Los tickets nuevos se reparten en este orden: 1, 2, 3… y vuelven al 1.</small>
+            </div>
+          )}
 
           {viewerEsAdmin && form.rol === 'coordinador' && (
             <div style={{ gridColumn: '1/-1', display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#f9fafb', borderRadius: 8, padding: '0.6rem 0.875rem', marginTop: 4 }}>
@@ -227,6 +241,9 @@ export default function UsuariosPage() {
                       <td>{u.email}</td>
                       <td>
                         <span className={`badge badge-${u.rol}`}>{u.rol.charAt(0).toUpperCase() + u.rol.slice(1)}</span>
+                        {u.rol === 'coordinador' && u.numero_coordinador != null && (
+                          <span title="Número de coordinador (orden de reparto de tickets)" style={{ marginLeft: 6, fontWeight: 600, color: '#1e40af' }}>#{u.numero_coordinador}</span>
+                        )}
                         {u.rol === 'coordinador' && u.puede_editar_sistema && (
                           <span title="Puede editar información del sistema" style={{ marginLeft: 6 }}>🔑</span>
                         )}

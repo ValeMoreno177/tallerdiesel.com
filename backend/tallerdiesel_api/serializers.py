@@ -18,7 +18,8 @@ class UsuarioSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'nombre', 'apellido_paterno',
                   'apellido_materno', 'empresa', 'telefono', 'puesto', 'rol',
                   'is_active', 'email_verificado', 'fecha_registro', 'nombre_completo', 'password',
-                  'puede_editar_sistema', 'aviso_privacidad_aceptado', 'tour_completado', 'foto_version']
+                  'puede_editar_sistema', 'aviso_privacidad_aceptado', 'tour_completado', 'foto_version',
+                  'numero_coordinador']
         read_only_fields = ['id', 'fecha_registro', 'aviso_privacidad_aceptado', 'tour_completado']
 
     def get_foto_version(self, obj):
@@ -29,6 +30,17 @@ class UsuarioSerializer(serializers.ModelSerializer):
             from .models import FotoPerfil
             fecha = FotoPerfil.objects.filter(usuario_id=obj.pk).values_list('actualizada', flat=True).first()
         return int(fecha.timestamp()) if fecha else None
+
+    def validate_numero_coordinador(self, valor):
+        """El número de turno no se repite entre coordinadores."""
+        if valor is None:
+            return valor
+        otros = User.objects.filter(rol='coordinador', numero_coordinador=valor)
+        if self.instance:
+            otros = otros.exclude(pk=self.instance.pk)
+        if otros.exists():
+            raise serializers.ValidationError('Otro coordinador ya tiene ese número.')
+        return valor
 
     def validate(self, data):
         """Un correo no se puede repetir entre cuentas, con UNA excepción: el Administrador puede
