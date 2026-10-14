@@ -1200,3 +1200,84 @@ class EditarMensajesChatTests(APITestCase):
 
     def test_admin_si_edita_lo_suyo(self):
         self.assertEqual(self._editar(self.admin), (200, 'cambiado'))
+
+
+class MejorasChatYResenasTests(APITestCase):
+    """Palomitas de leído, 'escribiendo…', notas de voz, respuestas a reseñas y nombres cortos."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                     apellido_paterno='Pérez', email_verificado=True)
+        self.cliente = mk('cli_m', 'cliente')
+        self.coord = mk('coord_m', 'coordinador')
+        self.admin = mk('adm_m', 'admin')
+        self.ticket = Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1',
+                                            cliente=self.cliente, coordinador=self.coord, estatus='proceso')
+        self.tec = Tecnico.objects.create(nombre='Juan', categoria='motor_diesel', ciudad='X', estado='Y',
+                                          telefono='1', latitud=0, longitud=0)
+
+    def test_palomitas_de_leido(self):
+        c = ComentarioTicket.objects.create(ticket=self.ticket, autor=self.cliente, autor_nombre='cli', texto='hola')
+        # El admin solo mira: no marca como visto
+        self.client.force_authenticate(self.admin)
+        self.client.post(f'/api/tickets/{self.ticket.id}/marcar-mensajes-leidos/')
+        c.refresh_from_db(); self.assertIsNone(c.leido_en)
+        # El coordinador lo abre: queda visto
+        self.client.force_authenticate(self.coord)
+        self.client.post(f'/api/tickets/{self.ticket.id}/marcar-mensajes-leidos/')
+        c.refresh_from_db(); self.assertIsNotNone(c.leido_en)
+        self.client.force_authenticate(self.cliente)
+        r = self.client.get(f'/api/tickets/{self.ticket.id}/mensajes/')
+        self.assertIsNotNone(r.data['comentarios'][0]['leido_en'])
+
+    def test_escribiendo(self):
+        self.client.force_authenticate(self.cliente)
+        self.assertEqual(self.client.post(f'/api/tickets/{self.ticket.id}/escribiendo/').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/tickets/{self.ticket.id}/mensajes/').data['escribiendo'], [])   # no a sí mismo
+        self.client.force_authenticate(self.coord)
+        self.assertEqual(self.client.get(f'/api/tickets/{self.ticket.id}/mensajes/').data['escribiendo'],
+                         [self.cliente.nombre_completo])
+
+    def test_nota_de_voz(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, override_settings(MEDIA_ROOT=tmp):
+            self.client.force_authenticate(self.cliente)
+            audio = SimpleUploadedFile('nota.webm', b'\x1a\x45\xdf\xa3' + b'\x00' * 100, content_type='audio/webm')
+            r = self.client.post(f'/api/tickets/{self.ticket.id}/subir_evidencia/', {'archivo': audio}, format='multipart')
+            self.assertEqual(r.status_code, 201, getattr(r, 'data', r))
+            self.assertTrue(ComentarioTicket.objects.filter(ticket=self.ticket, texto='🎤 Nota de voz').exists())
+            falso = SimpleUploadedFile('nota.webm', b'esto no es audio', content_type='audio/webm')
+            r = self.client.post(f'/api/tickets/{self.ticket.id}/subir_evidencia/', {'archivo': falso}, format='multipart')
+            self.assertEqual(r.status_code, 400)
+
+    def test_responder_resena_y_nombres_cortos(self):
+        op = Opinion.objects.create(tecnico=self.tec, nombre_autor='Juan Pérez López', calificacion=2, comentario='Tardó')
+        self.client.force_authenticate(self.cliente)
+        self.assertEqual(self.client.post('/api/tecnicos/responder_resena/', {'opinion_id': op.id, 'respuesta': 'x'}, format='json').status_code, 403)
+        self.client.force_authenticate(self.coord)
+        r = self.client.post('/api/tecnicos/responder_resena/', {'opinion_id': op.id, 'respuesta': 'Gracias, ya lo mejoramos'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        op.refresh_from_db(); self.assertEqual(op.respuesta, 'Gracias, ya lo mejoramos')
+        # El público ve el nombre corto y la respuesta; el coordinador ve el nombre completo
+        self.client.force_authenticate(None)
+        pub = self.client.get(f'/api/tecnicos/{self.tec.id}/').data['opiniones'][0]
+        self.assertEqual(pub['nombre_autor'], 'Juan P.')
+        self.assertEqual(pub['respuesta'], 'Gracias, ya lo mejoramos')
+        self.assertNotIn('ticket', pub)
+        self.client.force_authenticate(self.coord)
+        self.assertEqual(self.client.get(f'/api/tecnicos/{self.tec.id}/').data['opiniones'][0]['nombre_autor'], 'Juan Pérez López')
+
+    def test_sla_configurable(self):
+        from tallerdiesel_api import views
+        anterior = views.SLA_SEGUNDOS_PENDIENTE
+        try:
+            views.SLA_SEGUNDOS_PENDIENTE = 900
+            self.assertEqual(views._texto_tiempo_sla(), '15 minutos')
+            views.SLA_SEGUNDOS_PENDIENTE = 5
+            self.assertEqual(views._texto_tiempo_sla(), '5 segundos')
+        finally:
+            views.SLA_SEGUNDOS_PENDIENTE = anterior

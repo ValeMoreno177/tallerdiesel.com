@@ -221,3 +221,30 @@ EMAIL_EMPRESA = os.environ.get('EMAIL_EMPRESA', 'coordinador@tallerdiesel.com')
 # Los tickets solo los edita el coordinador asignado; los demás roles los ven en modo lectura.
 # Pon ADMIN_PUEDE_EDITAR_TICKETS=true para que el Administrador también pueda editarlos.
 ADMIN_PUEDE_EDITAR_TICKETS = os.environ.get('ADMIN_PUEDE_EDITAR_TICKETS', 'false').strip().lower() in ('1', 'true', 'yes', 'si', 'sí')
+
+
+# ── Monitoreo de errores (Sentry) ─────────────────────────────────────────────
+# Se activa solo si en Railway defines la variable SENTRY_DSN (la da Sentry al crear el proyecto).
+# Cuando algo truena en producción, Sentry te avisa por correo con el detalle del error.
+if os.environ.get('SENTRY_DSN'):
+    try:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=os.environ['SENTRY_DSN'],
+            traces_sample_rate=float(os.environ.get('SENTRY_TRACES', '0.1')),
+            send_default_pii=False,
+            environment=os.environ.get('SENTRY_ENV', 'produccion'),
+        )
+    except Exception as e:   # nunca debe impedir que arranque el servidor
+        print(f'⚠️  Sentry no se pudo iniciar: {e}')
+
+
+# ── Caché compartido ──────────────────────────────────────────────────────────
+# Se guarda en la base de datos para que TODOS los procesos del servidor vean lo mismo
+# ("está escribiendo…", límites de intentos, revisión de SLA). No requiere servicios extra.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'td_cache',
+    }
+}

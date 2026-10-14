@@ -18,6 +18,7 @@ from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
 import io
+import os
 from PIL import Image, UnidentifiedImageError
 from threading import Thread
 
@@ -295,7 +296,7 @@ class PuedeEditarTicket(BasePermission):
         if obj.cliente_id != request.user.id:
             return False
         # Cliente: solo su propio ticket
-        if view.action in ('agregar_comentario', 'editar_comentario', 'subir_evidencia'):
+        if view.action in ('agregar_comentario', 'editar_comentario', 'subir_evidencia', 'escribiendo'):
             return True  # los comentarios nunca se bloquean, ni con el servicio finalizado
         if view.action == 'marcar_mensajes_leidos':
             return True
@@ -1127,16 +1128,42 @@ class TicketViewSet(viewsets.ModelViewSet):
             tipo='comentario',
             leida=False,
         ).update(leida=True)
+        # Palomitas ✓✓: los mensajes de la otra parte quedan como "vistos". El Admin solo mira:
+        # que él abra el chat no marca como vistos los mensajes entre cliente y coordinador.
+        if request.user.rol != 'admin':
+            ticket.comentarios.exclude(autor=request.user).filter(
+                leido_en__isnull=True, es_cambio_estatus=False,
+            ).update(leido_en=timezone.now())
         return Response({'marcados': actualizados})
+
+    @action(detail=True, methods=['post'])
+    def escribiendo(self, request, pk=None):
+        """Avisa que este usuario está escribiendo en el chat (dura unos segundos)."""
+        from django.core.cache import cache
+        ticket = self.get_object()
+        cache.set(f'escribiendo:{ticket.id}:{request.user.id}', request.user.nombre_completo, timeout=6)
+        claves = cache.get(f'escribiendo_lista:{ticket.id}') or []
+        if request.user.id not in claves:
+            cache.set(f'escribiendo_lista:{ticket.id}', (claves + [request.user.id])[-10:], timeout=60)
+        return Response({'ok': True})
 
     @action(detail=True, methods=['get'])
     def mensajes(self, request, pk=None):
         ticket = self.get_object()
         comentarios = ticket.comentarios.select_related('autor', 'evidencia')
+        from django.core.cache import cache
+        escribiendo = []
+        for uid in cache.get(f'escribiendo_lista:{ticket.id}') or []:
+            if uid == request.user.id:
+                continue
+            nombre = cache.get(f'escribiendo:{ticket.id}:{uid}')
+            if nombre:
+                escribiendo.append(nombre)
         return Response({
             'ticket_id': ticket.id,
             'etiqueta': ticket.etiqueta,
             'comentarios': ComentarioTicketSerializer(comentarios, many=True).data,
+            'escribiendo': escribiendo,
         })
 
     @action(detail=True, methods=['post'])
@@ -1211,6 +1238,7 @@ class TicketViewSet(viewsets.ModelViewSet):
             print(f'⚠️  Error notificando comentario: {e}')
 
     EXT_EVIDENCIA = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
+    EXT_AUDIO = ('.webm', '.ogg', '.m4a', '.mp4', '.mp3', '.wav')   # notas de voz del chat
     MAX_EVIDENCIA_MB = 10
 
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
@@ -1226,8 +1254,8 @@ class TicketViewSet(viewsets.ModelViewSet):
         if not archivo:
             return Response({'error': 'Selecciona un archivo.'}, status=400)
         ext = os.path.splitext(archivo.name)[1].lower()
-        if ext not in self.EXT_EVIDENCIA:
-            return Response({'error': 'Formato no permitido. Usa JPG, PNG, WEBP o PDF.'}, status=400)
+        if ext not in self.EXT_EVIDENCIA and ext not in self.EXT_AUDIO:
+            return Response({'error': 'Formato no permitido. Usa JPG, PNG, WEBP, PDF o una nota de voz.'}, status=400)
         if archivo.size > self.MAX_EVIDENCIA_MB * 1024 * 1024:
             return Response({'error': f'El archivo pesa más de {self.MAX_EVIDENCIA_MB} MB.'}, status=400)
         formatos_imagen = {'.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG', '.webp': 'WEBP'}
@@ -1235,6 +1263,17 @@ class TicketViewSet(viewsets.ModelViewSet):
             if ext == '.pdf':
                 if archivo.read(5) != b'%PDF-':
                     return Response({'error': 'El archivo no parece ser un PDF válido.'}, status=400)
+            elif ext in self.EXT_AUDIO:
+                cabecera = archivo.read(12)
+                es_audio = (
+                    cabecera.startswith(b'\x1a\x45\xdf\xa3')            # webm
+                    or cabecera.startswith(b'OggS')                     # ogg
+                    or cabecera[4:8] == b'ftyp'                         # m4a / mp4
+                    or cabecera.startswith(b'ID3') or cabecera[:2] in (b'\xff\xfb', b'\xff\xf3', b'\xff\xf2')  # mp3
+                    or (cabecera.startswith(b'RIFF') and cabecera[8:12] == b'WAVE')   # wav
+                )
+                if not es_audio:
+                    return Response({'error': 'La nota de voz no es un audio válido.'}, status=400)
             elif ext in formatos_imagen:
                 imagen = Image.open(archivo)
                 imagen.verify()
@@ -1251,7 +1290,8 @@ class TicketViewSet(viewsets.ModelViewSet):
             )
             ComentarioTicket.objects.create(
                 ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-                texto=f'📎 Evidencia del servicio subida: {ev.nombre_original}',
+                texto=(f'🎤 Nota de voz' if ext in self.EXT_AUDIO
+                       else f'📎 Evidencia del servicio subida: {ev.nombre_original}'),
                 evidencia=ev,
             )
             if es_cliente_del_ticket:
@@ -1261,7 +1301,8 @@ class TicketViewSet(viewsets.ModelViewSet):
                 for destinatario in destinatarios:
                     Notificacion.objects.create(
                         destinatario=destinatario,
-                        titulo=f'Nueva evidencia del cliente en {ticket.etiqueta}',
+                        titulo=(f'Nota de voz del cliente en {ticket.etiqueta}' if ext in self.EXT_AUDIO
+                                else f'Nueva evidencia del cliente en {ticket.etiqueta}'),
                         mensaje=f'{request.user.nombre_completo} adjuntó: {ev.nombre_original}',
                         tipo='comentario', referencia_id=ticket.id,
                     )
@@ -1508,18 +1549,21 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def corte_mensual(self, request):
+        """Totales por mes, del más reciente al más antiguo."""
         tickets = Ticket.objects.all()
         meses = {}
         for t in tickets:
-            key = t.fecha.strftime('%B De %Y').capitalize()
+            # Nombre del mes en español sin depender del idioma del servidor (en Railway salía en inglés)
+            key = f'{MESES_ES[t.fecha.month - 1]} de {t.fecha.year}'
             if key not in meses:
-                meses[key] = {'mes': key, 'tickets': 0, 'total': 0, 'ganancia': 0, 'iva': 0, 'comision': 0}
+                meses[key] = {'mes': key, 'clave': t.fecha.strftime('%Y-%m'), 'tickets': 0, 'total': 0,
+                              'ganancia': 0, 'iva': 0, 'comision': 0}
             meses[key]['tickets'] += 1
             meses[key]['total'] += float(t.total)
             meses[key]['ganancia'] += float(t.ganancia)
             meses[key]['iva'] += float(t.iva)
             meses[key]['comision'] += float(t.comision)
-        return Response(list(meses.values()))
+        return Response(sorted(meses.values(), key=lambda m: m['clave'], reverse=True))
 
     @action(detail=False, methods=['get'])
     def exportar_excel(self, request):
@@ -1588,6 +1632,20 @@ class TecnicoViewSet(viewsets.ModelViewSet):
     queryset = _con_resumen_calificaciones(Tecnico.objects.filter(activo=True))
     serializer_class = TecnicoSerializer
     permission_classes = [LecturaPublicaEdicionConPermiso]
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def responder_resena(self, request):
+        """Admin o Coordinador responde una reseña (como el desarrollador en Play Store).
+        Mandar la respuesta vacía la borra."""
+        if request.user.rol not in ('admin', 'coordinador'):
+            return Response({'error': 'Solo el taller puede responder reseñas.'}, status=403)
+        opinion = get_object_or_404(Opinion, pk=request.data.get('opinion_id'))
+        texto = (request.data.get('respuesta') or '').strip()[:1000]
+        opinion.respuesta = texto
+        opinion.respuesta_fecha = timezone.now() if texto else None
+        opinion.respondido_por = request.user if texto else None
+        opinion.save(update_fields=['respuesta', 'respuesta_fecha', 'respondido_por'])
+        return Response(OpinionSerializer(opinion, context={'request': request}).data)
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -1933,11 +1991,27 @@ def marcar_solicitud_atendida(request, pk):
 
 # ── Notificaciones ────────────────────────────────────────────────────────────
 
-SLA_SEGUNDOS_PENDIENTE = 5
+# Tiempo para la alerta de SLA. Se configura en Railway con la variable SLA_SEGUNDOS
+# (por ejemplo 900 = 15 minutos). Sin la variable se conserva el valor de la entrega: 5 segundos.
+MESES_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto',
+            'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
+SLA_SEGUNDOS_PENDIENTE = int(os.environ.get('SLA_SEGUNDOS', '5') or 5)
+
+
+def _texto_tiempo_sla():
+    s = SLA_SEGUNDOS_PENDIENTE
+    if s >= 3600 and s % 3600 == 0:
+        h = s // 3600
+        return f'{h} hora' + ('s' if h != 1 else '')
+    if s >= 60 and s % 60 == 0:
+        m = s // 60
+        return f'{m} minuto' + ('s' if m != 1 else '')
+    return f'{s} segundo' + ('s' if s != 1 else '')
 
 
 def revisar_alertas_sla():
-    """Notifica tickets pendientes y mensajes de cliente que esperan respuesta más de 5 s."""
+    """Notifica tickets pendientes y mensajes de cliente que esperan respuesta más de SLA_SEGUNDOS."""
     limite = timezone.now() - timedelta(seconds=SLA_SEGUNDOS_PENDIENTE)
     atrasados = Ticket.objects.filter(
         estatus='pendiente', alerta_sla_enviada=False, fecha_creacion__lt=limite
@@ -1951,7 +2025,7 @@ def revisar_alertas_sla():
             Notificacion.objects.create(
                 destinatario=u,
                 titulo=f'⏰ SLA: Ticket {t.etiqueta} sin atender',
-                mensaje=f'El servicio {t.etiqueta} de {t.empresa} lleva más de {SLA_SEGUNDOS_PENDIENTE} segundos "Pendiente" sin asignar técnico.',
+                mensaje=f'El servicio {t.etiqueta} de {t.empresa} lleva más de {_texto_tiempo_sla()} "Pendiente" sin asignar técnico.',
                 tipo='alerta_sla',
                 referencia_id=t.id,
             )
@@ -1975,7 +2049,7 @@ def revisar_alertas_sla():
                 destinatario=usuario,
                 titulo=f'⏰ SLA: respuesta pendiente — Ticket {ticket.etiqueta}',
                 mensaje=(
-                    f'El cliente lleva más de {SLA_SEGUNDOS_PENDIENTE} segundos esperando '
+                    f'El cliente lleva más de {_texto_tiempo_sla()} esperando '
                     f'respuesta en el ticket {ticket.etiqueta}.'
                 ),
                 tipo='alerta_respuesta_sla',

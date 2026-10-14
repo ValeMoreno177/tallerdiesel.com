@@ -4,6 +4,9 @@ import api from '../api/client'
 import Avatar from '../components/Avatar'
 import { useAuth } from '../context/AuthContext'
 import PasswordInput from '../components/PasswordInput'
+import { EsqueletoTabla } from '../components/Esqueleto'
+import { EncabezadoPagina } from '../components/ui'
+import CamionTitulo from '../components/CamionTitulo'
 
 const ROLES = ['admin', 'coordinador', 'cliente']
 
@@ -197,13 +200,9 @@ export default function UsuariosPage() {
     <div className="dashboard-layout">
       <Sidebar />
       <main className="main-content">
-        <div className="card-header" style={{ marginBottom: '1.5rem' }}>
-          <div>
-            <h1 className="page-title">Gestión de Usuarios</h1>
-            <p style={{ color: '#9ca3af', fontSize: '0.875rem' }}>{usuarios.length} usuarios</p>
-          </div>
+        <EncabezadoPagina titulo="Gestión de Usuarios" subtitulo={`${usuarios.length} usuarios`} decoracion={<CamionTitulo />}>
           <button className="btn btn-primary" onClick={() => setModal('nuevo')}>+ Nuevo usuario</button>
-        </div>
+        </EncabezadoPagina>
 
         <div className="grid-stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '1.5rem' }}>
           {resumen.map((r, i) => (
@@ -224,7 +223,7 @@ export default function UsuariosPage() {
               {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
             </select>
           </div>
-          {loading ? <div className="loader"><div className="spinner" /></div> : (
+          {loading ? <EsqueletoTabla filas={5} columnas={6} /> : (
             <div className="table-wrap">
               <table>
                 <thead><tr><th>Usuario</th><th>Nombre completo</th><th>Correo</th><th>Rol</th><th>Empresa</th><th>Estatus</th><th>Acciones</th></tr></thead>

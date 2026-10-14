@@ -8,6 +8,8 @@ import ChatTicketModal, { BotonChat } from '../components/ChatTicketModal'
 import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import CamionTitulo from '../components/CamionTitulo'
+import useEsCelular from '../hooks/useEsCelular'
+import { EsqueletoTabla } from '../components/Esqueleto'
 
 // ─────────────────────────────────────────────
 const fmt = n => `$${parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
@@ -327,6 +329,7 @@ function ModalEliminar({ ticket, onClose, onDeleted }) {
 // ─────────────────────────────────────────────
 export default function BitacoraPage({ rol }) {
   const { user } = useAuth()
+  const esCelular = useEsCelular()
   const [tickets,       setTickets]       = useState([])
   const [coordinadores, setCoordinadores] = useState([])
   const [empresas,      setEmpresas]      = useState([])
@@ -460,6 +463,65 @@ export default function BitacoraPage({ rol }) {
     return matchBusqueda && matchTipo && matchEmpresa
   })
 
+  // ── Exportar con los filtros que se están viendo ──
+  const [exportando, setExportando] = useState(false)
+  const exportarExcel = async () => {
+    setExportando(true)
+    try {
+      const params = new URLSearchParams()
+      if (tipoFiltro && tipoFiltro !== 'todos' && tipoFiltro !== 'papelera') params.set('tipo', tipoFiltro)
+      if (busqueda) params.set('busqueda', busqueda)
+      if (empresaFiltro.length) params.set('empresas', empresaFiltro.join(','))
+      const { data } = await api.get(`/tickets/exportar_excel/?${params}`, { responseType: 'blob' })
+      const url = URL.createObjectURL(data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `bitacora_tallerdiesel_${new Date().toISOString().slice(0, 10)}.xlsx`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+    } catch {
+      alert('No se pudo generar el Excel. Intenta de nuevo.')
+    } finally { setExportando(false) }
+  }
+  const exportarPDF = () => {
+    // Abre una versión para imprimir; desde ahí se elige "Guardar como PDF".
+    // Todo texto que viene de la base de datos se escapa antes de meterlo al HTML
+    const esc = v => String(v ?? '').replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]))
+    const filas = filtrados.map(t => `<tr>
+      <td>${esc(t.etiqueta || t.ticket_id)}</td><td>${esc(t.empresa)}</td><td>${esc(t.fecha)}</td>
+      <td>${esc(t.estatus_display || t.estatus)}</td><td>${esc(t.unidad)}</td><td>${esc(t.lugar)}</td>
+      <td>${esc(t.tecnico_nombre || '—')}</td><td>${esc(t.coordinador_nombre || '—')}</td>
+      <td style="text-align:right">${fmt(t.total)}</td><td>${esc(t.factura || '—')}</td></tr>`).join('')
+    const filtrosTexto = [
+      tipoFiltro !== 'todos' ? `Tipo: ${tipoFiltro}` : null,
+      busqueda ? `Búsqueda: "${esc(busqueda)}"` : null,
+      empresaFiltro.length ? `Empresas: ${esc(empresaFiltro.join(', '))}` : null,
+    ].filter(Boolean).join(' · ') || 'Sin filtros'
+    const total = filtrados.reduce((acc, t) => acc + (parseFloat(t.total) || 0), 0)
+    const w = window.open('', '_blank')
+    if (!w) { alert('Permite las ventanas emergentes para generar el PDF.'); return }
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Bitácora TallerDiesel</title>
+      <style>
+        body{font-family:Arial,sans-serif;margin:24px;color:#111}
+        h1{margin:0;font-size:20px} h1 span{color:#e85d04}
+        .meta{color:#6b7280;font-size:12px;margin:4px 0 14px}
+        table{width:100%;border-collapse:collapse;font-size:11px}
+        th{background:#111827;color:#fff;text-align:left;padding:6px}
+        td{padding:5px 6px;border-bottom:1px solid #e5e7eb}
+        tr:nth-child(even) td{background:#f9fafb}
+        tfoot td{font-weight:bold;border-top:2px solid #111827}
+        @page{size:landscape;margin:12mm}
+      </style></head><body>
+      <h1>TALLER<span>DIESEL</span> — Bitácora</h1>
+      <div class="meta">${new Date().toLocaleString('es-MX')} · ${filtrados.length} registros · ${filtrosTexto}</div>
+      <table><thead><tr><th>Ticket</th><th>Empresa</th><th>Fecha</th><th>Estatus</th><th>Unidad</th><th>Lugar</th>
+      <th>Técnico</th><th>Coordinador</th><th>Total</th><th>Factura</th></tr></thead>
+      <tbody>${filas}</tbody>
+      <tfoot><tr><td colspan="8">Total</td><td style="text-align:right">${fmt(total)}</td><td></td></tr></tfoot></table>
+      <script>window.onload=()=>{window.print()}<\/script></body></html>`)
+    w.document.close()
+  }
+
   const toggleEmpresaFiltro = (emp) => {
     setEmpresaFiltro(prev => prev.includes(emp) ? prev.filter(e => e !== emp) : [...prev, emp])
   }
@@ -485,6 +547,16 @@ export default function BitacoraPage({ rol }) {
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             <input className="form-input" placeholder="Buscar ticket, empresa, unidad..."
               value={busqueda} onChange={e => setBusqueda(e.target.value)} style={{ width: 260 }} />
+            {(rol === 'admin' || rol === 'coordinador') && tipoFiltro !== 'papelera' && (
+              <>
+                <button className="btn btn-ghost" onClick={exportarExcel} disabled={exportando} title="Descargar en Excel con los filtros actuales">
+                  {exportando ? '⏳' : '📊'} Excel
+                </button>
+                <button className="btn btn-ghost" onClick={exportarPDF} title="Imprimir o guardar como PDF con los filtros actuales">
+                  🖨️ PDF
+                </button>
+              </>
+            )}
             <button className="btn btn-primary" onClick={() => openModal('editar', null)}
               style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
               ＋ Agregar nuevo servicio
@@ -512,7 +584,7 @@ export default function BitacoraPage({ rol }) {
         </div>
 
         {tipoFiltro === 'papelera' ? (
-          loadingPapelera ? <div className="loader"><div className="spinner" /></div> : (
+          loadingPapelera ? <EsqueletoTabla filas={4} /> : (
             <div className="card" style={{ padding: 0 }}>
               <div className="table-wrap">
                 <table>
@@ -549,7 +621,54 @@ export default function BitacoraPage({ rol }) {
               </div>
             </div>
           )
-        ) : loading ? <div className="loader"><div className="spinner" /></div> : (
+        ) : loading ? <EsqueletoTabla /> : esCelular ? (
+          /* ── Celular: una tarjeta por ticket en lugar de la tabla ancha ── */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {filtrados.length === 0 && (
+              <div className="card" style={{ textAlign: 'center', color: '#9ca3af', padding: '2rem' }}>No hay tickets</div>
+            )}
+            {filtrados.map(t => {
+              const editable = t.puede_editar && (t.estatus !== 'terminado' || t.puede_editar_coordinador)
+              const borrable = rol === 'admin' || (rol === 'coordinador' && t.coordinador === user?.id)
+              return (
+                <article key={t.id} className="card bit-tarjeta" style={{ padding: '0.9rem 1rem', opacity: t.estatus === 'terminado' ? 0.85 : 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {editable && (
+                      <button className="btn btn-sm btn-ghost" style={{ padding: '2px 7px' }} title="Editar"
+                        aria-label={`Editar ${t.etiqueta || t.ticket_id}`} onClick={() => openModal('editar', t)}>✏️</button>
+                    )}
+                    <button className="td-link" style={{ background: 'none', border: 0, padding: 0, fontSize: '1rem' }}
+                      onClick={() => openModal('detalle', t)}>{t.etiqueta || t.ticket_id}</button>
+                    <span className={`badge badge-${t.estatus}`} style={{ marginLeft: 'auto' }}>{t.estatus_display || t.estatus}</span>
+                    {t.estatus === 'terminado' && <span title="Cerrado">🔒</span>}
+                  </div>
+                  <div style={{ fontWeight: 600, marginTop: 6 }}>{t.empresa}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', fontSize: '0.8rem', color: '#6b7280', marginTop: 6 }}>
+                    <span>📅 {t.fecha}</span>
+                    <span>🚛 {t.unidad || '—'}</span>
+                    <span>📍 {t.lugar || '—'}</span>
+                    <span>👷 {t.tecnico_nombre || 'Sin técnico'}</span>
+                    <span>🧑‍💼 {t.coordinador_nombre || '—'}</span>
+                    <span style={{ fontWeight: 700, color: '#111' }}>{fmt(t.total)}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                    <BotonChat ticket={t} onClick={() => setTicketChat(t)} />
+                    {t.estatus_factura && <span className={`badge badge-${t.estatus_factura}`}>Factura: {t.estatus_factura}</span>}
+                    {borrable && (
+                      <button className="btn btn-sm btn-ghost" title="Eliminar" aria-label="Eliminar"
+                        style={{ marginLeft: 'auto', color: '#dc2626' }} onClick={() => openModal('eliminar', t)}>🗑️</button>
+                    )}
+                  </div>
+                </article>
+              )
+            })}
+            {paginaSiguiente && (
+              <button className="btn btn-ghost" style={{ justifyContent: 'center' }} disabled={cargandoMas} onClick={cargarMasTickets}>
+                {cargandoMas ? 'Cargando...' : `⬇ Cargar más (${totalTickets - tickets.length} restantes)`}
+              </button>
+            )}
+          </div>
+        ) : (
           <div className="card" style={{ padding: 0 }}>
             <div className="table-wrap">
               <table>

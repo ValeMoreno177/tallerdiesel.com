@@ -1,29 +1,30 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 
-import LoginPage from "./pages/LoginPage";
-import RegistroPage from "./pages/RegistroPage";
-import VerificarEmailPage from "./pages/VerificarEmailPage";
-import ReenviarVerificacionPage from "./pages/ReenviarVerificacionPage";
-import RecuperarContrasenaPage from "./pages/RecuperarContrasenaPage";
-import SolicitarServicioPage from "./pages/SolicitarServicioPage";
-import SolicitarCoordinadorPage from "./pages/SolicitarCoordinadorPage";
-import MapaTecnicosPage from "./pages/MapaTecnicosPage";
-import SolicitarTecnicoPage from "./pages/SolicitarTecnicoPage";
+import { lazy, Suspense } from "react";
 
-import DashboardCliente from "./pages/DashboardCliente";
-import DashboardCoordinador from "./pages/DashboardCoordinador";
-import DashboardAdmin from "./pages/DashboardAdmin";
-import BitacoraPage from "./pages/BitacoraPage";
-import Creditopage from "./pages/Creditopage";
-import ClienteBitacoraPage from "./pages/ClienteBitacoraPage";
-import UsuariosPage from "./pages/UsuariosPage";
-import ConfiguracionPage from "./pages/ConfiguracionPage";
+// Cada pantalla se descarga solo cuando se abre (antes todo venía en un solo archivo de +500 KB).
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const RegistroPage = lazy(() => import("./pages/RegistroPage"));
+const VerificarEmailPage = lazy(() => import("./pages/VerificarEmailPage"));
+const ReenviarVerificacionPage = lazy(() => import("./pages/ReenviarVerificacionPage"));
+const RecuperarContrasenaPage = lazy(() => import("./pages/RecuperarContrasenaPage"));
+const SolicitarServicioPage = lazy(() => import("./pages/SolicitarServicioPage"));
+const SolicitarCoordinadorPage = lazy(() => import("./pages/SolicitarCoordinadorPage"));
+const MapaTecnicosPage = lazy(() => import("./pages/MapaTecnicosPage"));
+const SolicitarTecnicoPage = lazy(() => import("./pages/SolicitarTecnicoPage"));
+const DashboardCliente = lazy(() => import("./pages/DashboardCliente"));
+const DashboardCoordinador = lazy(() => import("./pages/DashboardCoordinador"));
+const DashboardAdmin = lazy(() => import("./pages/DashboardAdmin"));
+const BitacoraPage = lazy(() => import("./pages/BitacoraPage"));
+const ClienteBitacoraPage = lazy(() => import("./pages/ClienteBitacoraPage"));
+const UsuariosPage = lazy(() => import("./pages/UsuariosPage"));
+const PerfilPage = lazy(() => import("./pages/PerfilPage"));
 import TourGuia from "./components/TourGuia";
 import SesionInactividad from "./components/SesionInactividad";
-import PerfilPage from "./pages/PerfilPage";
 import CalificacionGlobal from "./components/CalificacionGlobal";
 import { NotificacionesProvider } from "./context/NotificacionesContext";
+import { PantallaCargando } from "./components/Esqueleto";
 
 function RutaProtegida({ children, roles, requierePermisoEdicion }) {
   const { user, loading } = useAuth();
@@ -67,6 +68,7 @@ export default function App() {
       <BrowserRouter
         future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
       >
+        <Suspense fallback={<PantallaCargando />}>
         <Routes>
           {/* Públicas */}
           <Route path="/login" element={<LoginPage />} />
@@ -213,17 +215,12 @@ export default function App() {
               </RutaProtegida>
             }
           />
-          <Route
-            path="/admin/configuracion"
-            element={
-              <RutaProtegida roles={["admin", "coordinador"]}>
-                <ConfiguracionPage />
-              </RutaProtegida>
-            }
-          />
+          {/* Configuración ya no está disponible: quien entre por la URL regresa a su inicio */}
+          <Route path="/admin/configuracion" element={<Navigate to="/dashboard" replace />} />
 
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+        </Suspense>
         <TourGuia />
         {/* Globales: cierre por inactividad (5 min) y ventana para calificar al terminar un servicio */}
         <SesionInactividad />

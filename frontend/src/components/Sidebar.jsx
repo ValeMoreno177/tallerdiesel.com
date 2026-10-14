@@ -3,6 +3,8 @@ import { useAuth } from "../context/AuthContext";
 import { useState, useEffect } from "react";
 import { getMenuItems } from "../utils/menuItems";
 import Avatar from "./Avatar";
+import { aplicarTema } from "../utils/tema";
+import { avisosDisponibles, permisoAvisos, pedirPermisoAvisos } from "../utils/avisosSistema";
 
 const LOGO = () => (
   <div
@@ -29,6 +31,28 @@ const LOGO = () => (
 );
 
 export default function Sidebar() {
+  const [tema, setTema] = useState(() => document.documentElement.getAttribute('data-tema') || 'claro');
+  // Avisos del sistema (barra del celular / esquina de la computadora)
+  const [permiso, setPermiso] = useState(() => permisoAvisos());
+  const activarAvisos = async () => setPermiso(await pedirPermisoAvisos());
+  // "Instalar app" (Chrome/Edge/Android ofrecen el evento beforeinstallprompt)
+  const [instalable, setInstalable] = useState(null);
+  useEffect(() => {
+    const alOfrecer = e => { e.preventDefault(); setInstalable(e); };
+    window.addEventListener("beforeinstallprompt", alOfrecer);
+    return () => window.removeEventListener("beforeinstallprompt", alOfrecer);
+  }, []);
+  const instalarApp = async () => {
+    if (!instalable) return;
+    instalable.prompt();
+    try { await instalable.userChoice; } catch { /* nada */ }
+    setInstalable(null);
+  };
+  const cambiarTema = () => {
+    const nuevo = tema === 'oscuro' ? 'claro' : 'oscuro';
+    aplicarTema(nuevo);
+    setTema(nuevo);
+  };
   const { user, logout, iniciarTour } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -120,6 +144,16 @@ export default function Sidebar() {
         </nav>
 
         <div className="sidebar-bottom">
+          {instalable && (
+            <button onClick={instalarApp} style={{ marginBottom: 6 }}>📲 Instalar app</button>
+          )}
+          {avisosDisponibles() && permiso === "default" && (
+            <button onClick={activarAvisos} style={{ marginBottom: 6 }}>🔔 Activar avisos</button>
+          )}
+          <button className="btn-tema" onClick={cambiarTema} style={{ marginBottom: 6 }}
+            aria-label={tema === 'oscuro' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}>
+            {tema === 'oscuro' ? '☀️ Modo claro' : '🌙 Modo oscuro'}
+          </button>
           <button data-tour="tutorial" onClick={iniciarTour} style={{ marginBottom: 6 }}>
             ❓ Ver tutorial
           </button>

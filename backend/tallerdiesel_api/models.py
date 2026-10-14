@@ -329,6 +329,7 @@ class ComentarioTicket(models.Model):
     estatus_anterior  = models.CharField(max_length=50, blank=True)
     estatus_nuevo     = models.CharField(max_length=50, blank=True)
     fecha           = models.DateTimeField(auto_now_add=True)
+    leido_en        = models.DateTimeField(null=True, blank=True)  # cuando la otra parte lo vio (palomitas ✓✓)
 
     class Meta:
         ordering = ['fecha']
@@ -399,6 +400,10 @@ class Opinion(models.Model):
     calificacion_servicio = models.PositiveSmallIntegerField(null=True, blank=True)
     comentario   = models.TextField(blank=True)
     fecha        = models.DateTimeField(auto_now_add=True)
+    # Respuesta del taller a la reseña (como el desarrollador en Play Store)
+    respuesta        = models.TextField(blank=True)
+    respuesta_fecha  = models.DateTimeField(null=True, blank=True)
+    respondido_por   = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
 
 
 class UnidadFlotilla(models.Model):

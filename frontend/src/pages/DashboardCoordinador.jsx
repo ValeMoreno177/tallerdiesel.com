@@ -7,6 +7,8 @@ import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import useAutoRefresh from '../hooks/useAutoRefresh'
 import CamionTitulo from '../components/CamionTitulo'
+import { EsqueletoTabla, EsqueletoTarjetas } from '../components/Esqueleto'
+import { GraficaMeses, GraficaDona, ticketsPorMes } from '../components/Graficas'
 
 export default function DashboardCoordinador() {
   const { user } = useAuth()
@@ -100,8 +102,18 @@ export default function DashboardCoordinador() {
           ))}
         </div>
 
-        {loading ? <div className="loader"><div className="spinner" /></div> : (
+        {loading ? <><EsqueletoTarjetas /><div style={{ height: 16 }} /><EsqueletoTabla filas={4} /></> : (
           <>
+            {tabActivo === 'tickets' && (
+              <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
+                <GraficaDona titulo="Mis servicios por estatus" partes={[
+                  { etiqueta: 'Finalizados', valor: data?.terminados || 0, color: '#059669' },
+                  { etiqueta: 'Reparando', valor: data?.en_proceso || 0, color: '#e85d04' },
+                  { etiqueta: 'Pendientes / en camino', valor: data?.pendientes || 0, color: '#111827' },
+                ]} />
+                <GraficaMeses titulo="Mis servicios por mes" datos={ticketsPorMes(data?.tickets || [])} />
+              </div>
+            )}
             {tabActivo === 'tickets' && (
               <div className="card" style={{ padding: 0 }}>
                 <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #f3f4f6' }}>
@@ -168,7 +180,7 @@ export default function DashboardCoordinador() {
                       {s.ticket_codigo && (
                         <button className="btn btn-primary btn-sm"
                           onClick={() => marcarRellenada(s)}
-                          style={{ whiteSpace: 'nowrap', background: '#2563eb' }}>
+                          style={{ whiteSpace: 'nowrap' }}>
                           📋 Ver / Rellenar ticket
                         </button>
                       )}

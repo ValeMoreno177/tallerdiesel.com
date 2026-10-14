@@ -16,7 +16,6 @@ const TEXTOS = {
   '/admin/usuarios': 'Administra las cuentas del sistema: clientes, coordinadores y sus permisos.',
   '/coordinador/usuarios': 'Administra las cuentas del sistema: clientes y coordinadores.',
   '/mapa-tecnicos': 'Mapa con los técnicos disponibles por zona, con su disponibilidad y calificaciones.',
-  '/admin/configuracion': 'Los datos generales de la empresa: nombre, RFC, dirección y contacto.',
   '/coordinador/perfil': 'Tu perfil: sube o cambia tu foto y actualiza tu contraseña.',
 }
 

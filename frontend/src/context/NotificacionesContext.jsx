@@ -2,8 +2,9 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect } f
 import api from '../api/client'
 import { useAuth } from './AuthContext'
 import useAutoRefresh, { refrescarAhora } from '../hooks/useAutoRefresh'
-import { NOTIFICACIONES_MS } from '../config/tiempos'
+import { NOTIFICACIONES_MS, NOTIFICACIONES_OCULTO_MS } from '../config/tiempos'
 import Toast from '../components/Toast'
+import { mostrarAvisoSistema } from '../utils/avisosSistema'
 
 // ── Sonido de notificación generado con Web Audio API (sin archivos externos) ──
 let contextoAudio = null
@@ -195,8 +196,10 @@ export function NotificacionesProvider({ children }) {
         const paraAviso = nuevas.filter(n => n.tipo !== 'calificar_servicio')
         if (paraAviso.length === 1) {
           setAviso({ id: paraAviso[0].id, titulo: paraAviso[0].titulo, mensaje: paraAviso[0].mensaje })
+          mostrarAvisoSistema(paraAviso[0].titulo, paraAviso[0].mensaje)
         } else if (paraAviso.length > 1) {
           setAviso({ id: paraAviso[0].id, titulo: `Tienes ${paraAviso.length} notificaciones nuevas`, mensaje: paraAviso[0].titulo })
+          mostrarAvisoSistema(`Tienes ${paraAviso.length} notificaciones nuevas`, paraAviso[0].titulo)
         }
       }
     }
@@ -219,8 +222,8 @@ export function NotificacionesProvider({ children }) {
     await cargar()
   }, [cargar])
 
-  // Cada segundo (NOTIFICACIONES_MS), aunque la pestaña esté en segundo plano
-  useAutoRefresh(cargar, { activo: !!user, inmediato: true, intervalo: NOTIFICACIONES_MS })
+  // Cada NOTIFICACIONES_MS con la pestaña visible; en segundo plano sigue revisando, pero más espaciado
+  useAutoRefresh(cargar, { activo: !!user, inmediato: true, intervalo: NOTIFICACIONES_MS, intervaloOculto: NOTIFICACIONES_OCULTO_MS })
 
   const marcarLeida = useCallback(async (id) => {
     await api.post(`/notificaciones/${id}/leer/`)

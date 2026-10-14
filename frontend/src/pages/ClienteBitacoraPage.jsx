@@ -10,6 +10,7 @@ import { pedirCalificacion } from '../components/CalificacionGlobal'
 import useAutoRefresh from '../hooks/useAutoRefresh'
 import LineaTiempoEstatus from '../components/LineaTiempoEstatus'
 import CamionTitulo from '../components/CamionTitulo'
+import { EsqueletoTarjetas } from '../components/Esqueleto'
 
 const ETIQUETAS = { pendiente: 'Pendiente', atendido: 'En camino', proceso: 'Reparando', terminado: 'Finalizado' }
 
@@ -178,7 +179,7 @@ export default function ClienteBitacoraPage() {
         </div>
 
         {loading ? (
-          <div className="loader"><div className="spinner" /></div>
+          <EsqueletoTarjetas cantidad={3} />
         ) : tickets.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
             Aún no has realizado ninguna solicitud de servicio.

@@ -7,6 +7,12 @@ import Sidebar from '../components/Sidebar'
 import api from '../api/client'
 import { API_BASE_URL } from '../api/baseURL'
 import { crearIconoTecnico, CATEGORIA_LEYENDA, CATEGORIA_ICONO, CATEGORIA_COLOR } from '../utils/tecnicoIcons'
+import 'leaflet/dist/leaflet.css'
+import iconoMarcador2x from 'leaflet/dist/images/marker-icon-2x.png'
+import iconoMarcador from 'leaflet/dist/images/marker-icon.png'
+import sombraMarcador from 'leaflet/dist/images/marker-shadow.png'
+import ResenasTecnico from '../components/ResenasTecnico'
+import { BotonPildora } from '../components/ui'
 
 const publicApi = axios.create({ baseURL: API_BASE_URL })
 
@@ -71,9 +77,9 @@ export default function SolicitarTecnicoPage() {
     try {
       delete L.Icon.Default.prototype._getIconUrl
       L.Icon.Default.mergeOptions({
-        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-        iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-        shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+        iconRetinaUrl: iconoMarcador2x,
+        iconUrl:       iconoMarcador,
+        shadowUrl:     sombraMarcador,
       })
     } catch (e) { console.warn('Leaflet:', e) }
     setMapaListo(true)
@@ -246,7 +252,7 @@ export default function SolicitarTecnicoPage() {
               {CATEGORIAS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
             <button onClick={() => fetchTecnicos(busqueda)}
-              style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, padding: '12px 24px', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer' }}>
+              style={{ background: 'var(--naranja)', color: 'white', border: 'none', borderRadius: 8, padding: '12px 24px', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer' }}>
               Buscar
             </button>
           </div>
@@ -276,9 +282,9 @@ export default function SolicitarTecnicoPage() {
               <MapContainer center={[23.6345, -102.5528]} zoom={5} style={{ height: 500, width: '100%' }}>
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 {!loadingTec && tecnicos.map((t, i) => (
-                  <Marker key={t.id} position={[t.latitud, t.longitud]} icon={crearIconoTecnico(t.categoria, t.disponible)}>
-                    <Popup>
-                      <div style={{ minWidth: 200 }}>
+                  <Marker key={t.id} position={[t.latitud, t.longitud]} icon={crearIconoTecnico(t.categoria, t.disponible, t.calificacion_promedio)}>
+                    <Popup minWidth={270} maxWidth={300} maxHeight={380}>
+                      <div style={{ minWidth: 250 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                           <strong style={{ fontSize: '1rem' }}>{t.nombre}</strong>
                           <span style={{
@@ -290,6 +296,8 @@ export default function SolicitarTecnicoPage() {
                           </span>
                         </div>
                         <span style={{ color: '#6b7280', fontSize: '0.85rem' }}>{t.categoria_display}</span>
+                        <br />
+                        <ResenasTecnico tecnico={t} soloResumen />
                         <div style={{ marginTop: 6, fontSize: '0.85rem' }}>
                           📍 {t.ciudad}, {t.estado}<br />
                           🏠 {t.direccion}<br />
@@ -301,24 +309,18 @@ export default function SolicitarTecnicoPage() {
                           </div>
                         )}
                         <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-                          <a href={`https://maps.google.com/?q=${t.latitud},${t.longitud}`} target="_blank" rel="noreferrer">
-                            <button style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: 20, padding: '5px 12px', fontSize: '0.78rem', cursor: 'pointer' }}>🧭 Cómo llegar</button>
-                          </a>
-                          <a href={`https://wa.me/${t.telefono.replace(/\D/g,'')}`} target="_blank" rel="noreferrer"
-                            onClick={() => elegirTecnico(t)}>
-                            <button style={{
-                              background: tecnicoElegido?.id === t.id ? '#1e40af' : t.disponible ? '#059669' : '#6b7280',
-                              color: 'white', border: 'none', borderRadius: 20, padding: '5px 12px', fontSize: '0.78rem', cursor: 'pointer'
-                            }}>
-                              {tecnicoElegido?.id === t.id ? '✅ Seleccionado' : '💬 WhatsApp'}
-                            </button>
-                          </a>
+                          <BotonPildora color="marino" href={`https://maps.google.com/?q=${t.latitud},${t.longitud}`}>🧭 Cómo llegar</BotonPildora>
+                          <BotonPildora color={tecnicoElegido?.id === t.id ? 'azul' : t.disponible ? 'verde' : 'gris'}
+                            href={`https://wa.me/${t.telefono.replace(/\D/g,'')}`} onClick={() => elegirTecnico(t)}>
+                            {tecnicoElegido?.id === t.id ? '✅ Seleccionado' : '💬 WhatsApp'}
+                          </BotonPildora>
                         </div>
                         {tecnicoElegido?.id !== t.id && (
                           <p style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: 6, marginBottom: 0 }}>
                             Al dar clic en WhatsApp este técnico se guardará en tu inicio
                           </p>
                         )}
+                        <ResenasTecnico tecnico={t} maxVisibles={1} />
                       </div>
                     </Popup>
                   </Marker>

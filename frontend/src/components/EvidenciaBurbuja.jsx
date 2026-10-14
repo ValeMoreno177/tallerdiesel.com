@@ -8,6 +8,7 @@ export default function EvidenciaBurbuja({ ticketId, evidencia }) {
   const [error, setError] = useState(false)
   const [grande, setGrande] = useState(false)
   const esPdf = /\.pdf$/i.test(evidencia.nombre_original || '')
+  const esAudio = /\.(webm|ogg|m4a|mp4|mp3|wav)$/i.test(evidencia.nombre_original || '')
 
   useEffect(() => {
     let vivo = true, objUrl = null
@@ -18,7 +19,18 @@ export default function EvidenciaBurbuja({ ticketId, evidencia }) {
   }, [ticketId, evidencia.id])
 
   if (error) return <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>📎 {evidencia.nombre_original} (no se pudo cargar)</div>
-  if (!url) return <div style={{ width: 200, height: 120, borderRadius: 10, background: '#e5e7eb' }} />
+  if (!url) return <div style={{ width: esAudio ? 230 : 200, height: esAudio ? 40 : 120, borderRadius: 10, background: '#e5e7eb' }} />
+
+  // Nota de voz: reproductor del navegador
+  if (esAudio) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span aria-hidden="true">🎤</span>
+        <audio controls preload="metadata" src={url} style={{ height: 36, maxWidth: 240 }}
+          aria-label="Nota de voz" />
+      </div>
+    )
+  }
 
   if (esPdf) {
     return (

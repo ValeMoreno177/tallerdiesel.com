@@ -3,8 +3,15 @@
 // Refresco máximo de datos visibles en dashboards, bitácoras y detalle del ticket.
 export const REFRESCO_MS = 5 * 1000
 
-// Consulta frecuente para entregar mensajes y alertas con la menor demora posible.
-export const NOTIFICACIONES_MS = 1000
+// Campana de notificaciones/alertas. Antes era cada 1 s: con varios usuarios conectados eso
+// saturaba el servidor. 3 s sigue sintiéndose inmediato.
+export const NOTIFICACIONES_MS = 3000
+
+// Con la pestaña en segundo plano las alertas se siguen revisando (para que suenen), pero más espaciado.
+export const NOTIFICACIONES_OCULTO_MS = 15 * 1000
+
+// Mensajes del chat abierto (solo mientras la ventana está visible).
+export const CHAT_MS = 2000
 
 // Tiempo sin actividad (mouse, teclado, toque, scroll) tras el cual se cierra la sesión.
 export const INACTIVIDAD_MS = 5 * 60 * 1000

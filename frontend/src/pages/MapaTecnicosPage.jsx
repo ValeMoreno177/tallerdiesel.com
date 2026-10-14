@@ -11,6 +11,11 @@ import { crearIconoTecnico, CATEGORIA_LEYENDA, CATEGORIA_ICONO, CATEGORIA_COLOR 
 import { API_BASE_URL } from "../api/baseURL";
 import CamionTitulo from '../components/CamionTitulo'
 import ResenasTecnico from '../components/ResenasTecnico'
+import 'leaflet/dist/leaflet.css'
+import iconoMarcador2x from 'leaflet/dist/images/marker-icon-2x.png'
+import iconoMarcador from 'leaflet/dist/images/marker-icon.png'
+import sombraMarcador from 'leaflet/dist/images/marker-shadow.png'
+import { BotonPildora } from '../components/ui'
 
 // axios público sin interceptor de auth — para endpoints públicos como /tecnicos/
 const publicApi = axios.create({ baseURL: API_BASE_URL });
@@ -103,10 +108,10 @@ export default function MapaTecnicosPage() {
       delete L.Icon.Default.prototype._getIconUrl;
       L.Icon.Default.mergeOptions({
         iconRetinaUrl:
-          "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-        iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+          iconoMarcador2x,
+        iconUrl: iconoMarcador,
         shadowUrl:
-          "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+          sombraMarcador,
       });
     } catch (e) {
       console.warn("Leaflet init:", e);
@@ -375,7 +380,7 @@ export default function MapaTecnicosPage() {
           <button
             onClick={() => fetchTecnicos(busqueda)}
             style={{
-              background: "#2563eb",
+              background: "var(--naranja)",
               color: "white",
               border: "none",
               borderRadius: 8,
@@ -432,7 +437,7 @@ export default function MapaTecnicosPage() {
                 <Marker
                   key={t.id}
                   position={[t.latitud, t.longitud]}
-                  icon={crearIconoTecnico(t.categoria, t.disponible)}
+                  icon={crearIconoTecnico(t.categoria, t.disponible, t.calificacion_promedio)}
                 >
                   <Popup minWidth={270} maxWidth={300} maxHeight={360}>
                     <div style={{ minWidth: 250 }}>
@@ -456,69 +461,13 @@ export default function MapaTecnicosPage() {
                           flexWrap: "wrap",
                         }}
                       >
-                        <a
-                          href={`https://maps.google.com/?q=${t.latitud},${t.longitud}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <button
-                            style={{
-                              background: "#2563eb",
-                              color: "white",
-                              border: "none",
-                              borderRadius: 20,
-                              padding: "5px 12px",
-                              fontSize: "0.78rem",
-                              cursor: "pointer",
-                            }}
-                          >
-                            🧭 Cómo llegar
-                          </button>
-                        </a>
-                        {user?.rol === "cliente" ? (
-                          <a
-                            href={`https://wa.me/${t.telefono.replace(/\D/g, "")}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={() => elegirTecnico(t)}
-                          >
-                            <button
-                              style={{
-                                background: "#059669",
-                                color: "white",
-                                border: "none",
-                                borderRadius: 20,
-                                padding: "5px 12px",
-                                fontSize: "0.78rem",
-                                cursor: "pointer",
-                              }}
-                            >
-                              {tecnicoElegido?.id === t.id
-                                ? "✅ Seleccionado"
-                                : "💬 WhatsApp"}
-                            </button>
-                          </a>
-                        ) : (
-                          <a
-                            href={`https://wa.me/${t.telefono.replace(/\D/g, "")}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            <button
-                              style={{
-                                background: "#059669",
-                                color: "white",
-                                border: "none",
-                                borderRadius: 20,
-                                padding: "5px 12px",
-                                fontSize: "0.78rem",
-                                cursor: "pointer",
-                              }}
-                            >
-                              💬 WhatsApp
-                            </button>
-                          </a>
-                        )}
+                        <BotonPildora color="marino" href={`https://maps.google.com/?q=${t.latitud},${t.longitud}`}>
+                          🧭 Cómo llegar
+                        </BotonPildora>
+                        <BotonPildora color="verde" href={`https://wa.me/${t.telefono.replace(/\D/g, "")}`}
+                          onClick={user?.rol === "cliente" ? () => elegirTecnico(t) : undefined}>
+                          {user?.rol === "cliente" && tecnicoElegido?.id === t.id ? "✅ Seleccionado" : "💬 WhatsApp"}
+                        </BotonPildora>
                       </div>
                       {user?.rol === "cliente" &&
                         tecnicoElegido?.id !== t.id && (
@@ -535,16 +484,9 @@ export default function MapaTecnicosPage() {
                           </p>
                         )}
                       {puedeAdministrar && (
-                        <button
-                          onClick={() => eliminarTecnico(t)}
-                          style={{
-                            marginTop: 8, background: "transparent", color: "#dc2626",
-                            border: "1px solid #dc2626", borderRadius: 20, padding: "4px 12px",
-                            fontSize: "0.72rem", cursor: "pointer",
-                          }}
-                        >
+                        <BotonPildora color="borde-rojo" style={{ marginTop: 8 }} onClick={() => eliminarTecnico(t)}>
                           🗑 Eliminar técnico
-                        </button>
+                        </BotonPildora>
                       )}
                       <ResenasTecnico tecnico={t} maxVisibles={1} />
                     </div>

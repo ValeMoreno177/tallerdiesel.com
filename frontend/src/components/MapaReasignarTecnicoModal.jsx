@@ -1,3 +1,4 @@
+import 'leaflet/dist/leaflet.css'
 import { useState, useEffect, useMemo } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'

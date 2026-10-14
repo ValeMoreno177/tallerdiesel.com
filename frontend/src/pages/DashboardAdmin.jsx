@@ -6,6 +6,8 @@ import ChatTicketModal from '../components/ChatTicketModal'
 import api from '../api/client'
 import useAutoRefresh from '../hooks/useAutoRefresh'
 import CamionTitulo from '../components/CamionTitulo'
+import { EsqueletoTabla, EsqueletoTarjetas } from '../components/Esqueleto'
+import { GraficaMeses, GraficaDona, GraficaTecnicos } from '../components/Graficas'
 
 export default function DashboardAdmin() {
   const [tab,         setTab]         = useState('general')
@@ -92,7 +94,7 @@ export default function DashboardAdmin() {
           ))}
         </div>
 
-        {loading ? <div className="loader"><div className="spinner" /></div> : (
+        {loading ? <><EsqueletoTarjetas /><div style={{ height: 16 }} /><EsqueletoTabla filas={4} /></> : (
           <>
             {tab === 'general' && (
               <>
@@ -106,6 +108,21 @@ export default function DashboardAdmin() {
                   ))}
                 </div>
                 <div className="grid-2" style={{ marginTop: '1.5rem' }}>
+                  <GraficaMeses datos={corte} />
+                  <GraficaDona partes={[
+                    { etiqueta: 'Finalizados', valor: data?.servicios_terminados || 0, color: '#059669' },
+                    { etiqueta: 'Reparando', valor: data?.en_proceso || 0, color: '#e85d04' },
+                    { etiqueta: 'Pendientes / en camino', valor: data?.pendientes || 0, color: '#111827' },
+                  ]} />
+                </div>
+                <div className="grid-2" style={{ marginTop: '1.5rem' }}>
+                  <GraficaTecnicos datos={data?.tickets_por_tecnico || []} />
+                  <GraficaDona titulo="Facturas" partes={[
+                    { etiqueta: 'Pagadas', valor: data?.facturas_pagadas || 0, color: '#059669' },
+                    { etiqueta: 'Pendientes de pago', valor: data?.facturas_pendientes || 0, color: '#f59e0b' },
+                  ]} />
+                </div>
+                <div className="grid-2" style={{ marginTop: '1.5rem' }}>
                   <div className="card">
                     <h3 className="card-title" style={{ marginBottom: '1rem' }}>Top empresas</h3>
                     {data?.top_empresas?.map((e, i) => (
@@ -114,7 +131,7 @@ export default function DashboardAdmin() {
                           <span>{e.empresa}</span><span style={{ fontWeight: 600 }}>{fmt(e.total)}</span>
                         </div>
                         <div style={{ background: '#e5e7eb', borderRadius: 4, height: 6 }}>
-                          <div style={{ height: '100%', background: 'var(--azul)', borderRadius: 4, width: `${Math.min(100, (e.total / (data?.ingresos_totales || 1)) * 100)}%` }} />
+                          <div style={{ height: '100%', background: 'var(--naranja)', borderRadius: 4, width: `${Math.min(100, (e.total / (data?.ingresos_totales || 1)) * 100)}%` }} />
                         </div>
                       </div>
                     ))}

@@ -13,10 +13,12 @@ export const refrescarAhora = () => window.dispatchEvent(new Event(EVENTO_REFRES
  *  - inmediato:    además la ejecuta una vez al montar (útil si el componente no carga por su cuenta).
  *  - soloVisible:  true = no consulta mientras la pestaña está oculta y se pone al día al volver.
  *                  (Déjalo en false para las alertas: así suenan aunque estés en otra pestaña.)
+ *  - intervaloOculto: con la pestaña oculta (y soloVisible=false) consulta con este intervalo más
+ *                  largo, para no cargar al servidor con pestañas olvidadas.
  *
  * Nunca se empalman dos ejecuciones: si una consulta sigue en curso, se salta ese turno.
  */
-export default function useAutoRefresh(callback, { activo = true, inmediato = false, soloVisible = false, intervalo = REFRESCO_MS } = {}) {
+export default function useAutoRefresh(callback, { activo = true, inmediato = false, soloVisible = false, intervalo = REFRESCO_MS, intervaloOculto = null } = {}) {
   const cbRef = useRef(callback)
   useEffect(() => { cbRef.current = callback })
 
@@ -24,16 +26,24 @@ export default function useAutoRefresh(callback, { activo = true, inmediato = fa
     if (!activo) return undefined
     let enCurso = false
     let vivo = true
+    let ultima = 0
 
     const ejecutar = async () => {
       if (enCurso || !vivo) return
       enCurso = true
+      ultima = Date.now()
       try { await cbRef.current?.() } catch { /* un fallo de red no debe detener el ciclo */ }
       finally { enCurso = false }
     }
 
-    const alTic = () => { if (!(soloVisible && document.hidden)) ejecutar() }
-    const alVolver = () => { if (soloVisible && !document.hidden) ejecutar() }
+    const alTic = () => {
+      if (document.hidden) {
+        if (soloVisible) return
+        if (intervaloOculto && Date.now() - ultima < intervaloOculto) return
+      }
+      ejecutar()
+    }
+    const alVolver = () => { if (!document.hidden && (soloVisible || intervaloOculto)) ejecutar() }
 
     if (inmediato) ejecutar()
     const id = setInterval(alTic, intervalo)
@@ -45,5 +55,5 @@ export default function useAutoRefresh(callback, { activo = true, inmediato = fa
       document.removeEventListener('visibilitychange', alVolver)
       window.removeEventListener(EVENTO_REFRESCAR, ejecutar)
     }
-  }, [activo, inmediato, soloVisible, intervalo])
+  }, [activo, inmediato, soloVisible, intervalo, intervaloOculto])
 }

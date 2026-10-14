@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext'
 import useAutoRefresh from '../hooks/useAutoRefresh'
 import LineaTiempoEstatus from '../components/LineaTiempoEstatus'
 import CamionTitulo from '../components/CamionTitulo'
+import { EsqueletoTabla } from '../components/Esqueleto'
 
 
 function MiniBarra({ estatus }) {
@@ -69,7 +70,7 @@ export default function DashboardCliente() {
           ☰ Ver bitácora completa
         </button>
       </div>
-      {loading ? <div className="loader"><div className="spinner" /></div> : (
+      {loading ? <EsqueletoTabla filas={3} columnas={5} /> : (
         <div className="table-wrap">
           <table>
             <thead>

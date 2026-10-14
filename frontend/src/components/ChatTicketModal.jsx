@@ -4,8 +4,55 @@ import EvidenciaBurbuja from './EvidenciaBurbuja'
 import Avatar from './Avatar'
 import { useAuth } from '../context/AuthContext'
 import useAutoRefresh from '../hooks/useAutoRefresh'
-import { NOTIFICACIONES_MS } from '../config/tiempos'
+import { CHAT_MS } from '../config/tiempos'
 import { comprimirEvidencia } from '../utils/imagen'
+
+// ── Emojis con movimiento ─────────────────────────────────────────────────────
+// Separa el texto en trozos y envuelve cada emoji en un <span> animado. Cada emoji tiene su propio
+// movimiento según su tipo (corazón late, mano saluda, fuego/estrella brillan, risa rebota...).
+// Si el mensaje es SOLO emojis (1 a 3), se muestran grandes, como en WhatsApp.
+const RE_EMOJI = /(\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*)/gu
+const RE_SOLO_EMOJIS = /^(?:\s*\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*\s*){1,3}$/u
+
+function tipoMovimiento(emoji) {
+  if (/[❤💖💗💓💕💘💝🧡💛💚💙💜🖤🤍😍🥰😘]/u.test(emoji)) return 'late'
+  if (/[👋🙌👏🤝✋🖐]/u.test(emoji)) return 'saluda'
+  if (/[👍👎👌✌🤞💪]/u.test(emoji)) return 'asiente'
+  if (/[🔥✨⭐🌟💫⚡🎉🎊]/u.test(emoji)) return 'brilla'
+  if (/[🚛🚚🚗🏎🛻🚐🚑🚒🚓🏍🛵]/u.test(emoji)) return 'maneja'
+  if (/[🔧🔨🛠⚙🔩]/u.test(emoji)) return 'gira'
+  if (/[😂🤣😆😅😁😄😃😀]/u.test(emoji)) return 'rie'
+  return 'rebota'
+}
+
+// Convierte las direcciones web del texto en enlaces (por ejemplo, la ubicación compartida).
+function ConEnlaces({ texto }) {
+  const trozos = String(texto).split(/(https?:\/\/[^\s]+)/g)
+  return trozos.map((t, i) => (i % 2 === 1
+    ? <a key={i} href={t} target="_blank" rel="noreferrer" className="tdchat-enlace">
+        {/maps\.google|google\.[a-z.]+\/maps/.test(t) ? '🗺️ Ver en el mapa' : t}
+      </a>
+    : t))
+}
+
+function TextoConEmojis({ texto }) {
+  const valor = String(texto ?? '')
+  const soloEmojis = RE_SOLO_EMOJIS.test(valor.trim())
+  let i = 0
+  const partes = valor.split(RE_EMOJI).map((parte, idx) => {
+    if (!parte) return null
+    if (idx % 2 === 1) {   // los trozos impares son los emojis capturados
+      const n = i++
+      return (
+        <span key={idx} className={`tdchat-emoji ${tipoMovimiento(parte)}`} style={{ animationDelay: `${n * 0.15}s` }}>
+          {parte}
+        </span>
+      )
+    }
+    return <span key={idx}><ConEnlaces texto={parte} /></span>
+  })
+  return <span className={soloEmojis ? 'tdchat-solo-emojis' : undefined}>{partes}</span>
+}
 
 export function BotonChat({ ticket, onClick, compacto = false }) {
   const pendientes = Math.max(0, Number(ticket.mensajes_no_leidos) || 0)
@@ -48,6 +95,14 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
   const finMensajes = useRef(null)
   const archivoRef = useRef(null)
   const fotoRef = useRef(null)
+  const [escribiendo, setEscribiendo] = useState([])          // nombres de quienes escriben ahora
+  const ultimoAvisoEscribiendo = useRef(0)
+  const [grabando, setGrabando] = useState(false)
+  const [segundosGrabando, setSegundosGrabando] = useState(0)
+  const grabadora = useRef(null)
+  const trozosAudio = useRef([])
+  const cancelarGrabacion = useRef(false)
+  const [ubicando, setUbicando] = useState(false)
   const idsComentarios = useRef(null)
   const onReadRef = useRef(onRead)
 
@@ -63,6 +118,7 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
       const { data } = await api.get(`/tickets/${ticket.id}/mensajes/`)
       const visibles = data.comentarios.filter(c => !c.es_cambio_estatus)
       setTicketInfo(prev => ({ ...prev, etiqueta: data.etiqueta }))
+      setEscribiendo(data.escribiendo || [])
       const idsNuevos = new Set(visibles.map(c => c.id))
       const hayMensajeEntrante = idsComentarios.current && visibles.some(
         c => c.autor !== user?.id && !idsComentarios.current.has(c.id),
@@ -109,7 +165,7 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
     marcarLeidos().catch(() => setError('No se pudieron marcar los mensajes como leídos.'))
   }, [marcarLeidos])
 
-  useAutoRefresh(cargarMensajes, { activo: true, inmediato: true, intervalo: NOTIFICACIONES_MS })
+  useAutoRefresh(cargarMensajes, { activo: true, inmediato: true, soloVisible: true, intervalo: CHAT_MS })
 
   useEffect(() => {
     finMensajes.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -138,6 +194,89 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
     }
   }
 
+  // Avisa "está escribiendo…" a la otra parte (como máximo cada 3 s)
+  const alEscribir = valor => {
+    setMensaje(valor)
+    const ahora = Date.now()
+    if (valor.trim() && ahora - ultimoAvisoEscribiendo.current > 3000) {
+      ultimoAvisoEscribiendo.current = ahora
+      api.post(`/tickets/${ticket.id}/escribiendo/`).catch(() => {})
+    }
+  }
+
+  const subirArchivo = async archivo => {
+    const form = new FormData()
+    form.append('archivo', archivo, archivo.name)
+    const { data } = await api.post(`/tickets/${ticket.id}/subir_evidencia/`, form)
+    setEvidenciasTicket(data.evidencias || [])
+  }
+
+  // ── Nota de voz ──
+  const iniciarGrabacion = async () => {
+    setError('')
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setError('Tu navegador no permite grabar audio.'); return
+    }
+    try {
+      const flujo = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const tipo = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
+        .find(t => MediaRecorder.isTypeSupported?.(t)) || ''
+      const rec = new MediaRecorder(flujo, tipo ? { mimeType: tipo } : undefined)
+      trozosAudio.current = []
+      cancelarGrabacion.current = false
+      rec.ondataavailable = e => { if (e.data.size) trozosAudio.current.push(e.data) }
+      rec.onstop = async () => {
+        flujo.getTracks().forEach(t => t.stop())
+        setGrabando(false)
+        if (cancelarGrabacion.current || !trozosAudio.current.length) return
+        const mime = rec.mimeType || tipo || 'audio/webm'
+        const ext = mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : 'webm'
+        const audio = new File(trozosAudio.current, `nota_de_voz_${Date.now()}.${ext}`, { type: mime })
+        setSubiendo(true)
+        try { await subirArchivo(audio); await cargarMensajes() }
+        catch (err) { setError(err?.response?.data?.error || 'No se pudo enviar la nota de voz.') }
+        finally { setSubiendo(false) }
+      }
+      grabadora.current = rec
+      rec.start()
+      setSegundosGrabando(0)
+      setGrabando(true)
+    } catch {
+      setError('No se pudo usar el micrófono. Revisa el permiso del navegador.')
+    }
+  }
+  const terminarGrabacion = (cancelar = false) => {
+    cancelarGrabacion.current = cancelar
+    if (grabadora.current?.state === 'recording') grabadora.current.stop()
+  }
+  useEffect(() => {
+    if (!grabando) return undefined
+    const id = setInterval(() => setSegundosGrabando(s => {
+      if (s + 1 >= 120) terminarGrabacion(false)        // máximo 2 minutos
+      return s + 1
+    }), 1000)
+    return () => clearInterval(id)
+  }, [grabando])
+  useEffect(() => () => terminarGrabacion(true), [])     // al cerrar el chat se descarta
+
+  // ── Compartir ubicación ──
+  const compartirUbicacion = () => {
+    if (!navigator.geolocation) { setError('Tu navegador no permite compartir la ubicación.'); return }
+    setUbicando(true); setError('')
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const { latitude, longitude } = pos.coords
+      try {
+        const { data } = await api.post(`/tickets/${ticket.id}/agregar_comentario/`, {
+          texto: `📍 Mi ubicación: https://maps.google.com/?q=${latitude.toFixed(6)},${longitude.toFixed(6)}`,
+        })
+        setComentarios(prev => [...prev, data])
+        idsComentarios.current?.add(data.id)
+      } catch (err) { setError(err?.response?.data?.error || 'No se pudo enviar la ubicación.') }
+      finally { setUbicando(false) }
+    }, () => { setUbicando(false); setError('No se pudo obtener tu ubicación. Revisa el permiso del navegador.') },
+    { enableHighAccuracy: true, timeout: 15000 })
+  }
+
   const guardarEdicion = async id => {
     if (!textoEdicion.trim()) return
     try {
@@ -162,10 +301,7 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
     try {
       for (const archivo of archivos) {
         const listo = await comprimirEvidencia(archivo)   // las fotos de cámara se reducen antes de subir
-        const form = new FormData()
-        form.append('archivo', listo, listo.name)
-        const { data } = await api.post(`/tickets/${ticket.id}/subir_evidencia/`, form)
-        setEvidenciasTicket(data.evidencias || [])
+        await subirArchivo(listo)
       }
       await cargarMensajes()
       await marcarLeidos()
@@ -269,7 +405,7 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
                         </div>
                       ) : (
                         <p className="tdchat-texto">
-                          {comentario.texto}
+                          <TextoConEmojis texto={comentario.texto} />
                           {comentario.editado && <span className="tdchat-editado"> (editado)</span>}
                           {mio && puedeEditarMensajes && (
                             <button
@@ -284,16 +420,39 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
                       )}
                     </div>
                   </article>
-                  <time className="tdchat-hora" title={fechaMensaje(comentario.fecha)}>{horaMensaje(comentario.fecha)}</time>
+                  <time className="tdchat-hora" title={fechaMensaje(comentario.fecha)}>
+                    {horaMensaje(comentario.fecha)}
+                    {mio && (
+                      <span className={`tdchat-check ${comentario.leido_en ? 'visto' : ''}`}
+                        title={comentario.leido_en ? `Visto ${fechaMensaje(comentario.leido_en)}` : 'Enviado'}
+                        aria-label={comentario.leido_en ? 'Visto' : 'Enviado'}>
+                        {comentario.leido_en ? '✓✓' : '✓'}
+                      </span>
+                    )}
+                  </time>
                 </div>
               </div>
             )
           })}
+          {escribiendo.length > 0 && (
+            <div className="tdchat-escribiendo" aria-live="polite">
+              <span className="tdchat-puntos" aria-hidden="true"><i /><i /><i /></span>
+              {escribiendo.join(', ')} {escribiendo.length === 1 ? 'está' : 'están'} escribiendo…
+            </div>
+          )}
           <div ref={finMensajes} />
         </div>
 
         {error && <div role="alert" className="tdchat-error">{error}</div>}
 
+        {grabando && (
+          <div className="tdchat-grabando" role="status">
+            <span className="tdchat-rec" aria-hidden="true" />
+            Grabando nota de voz… {String(Math.floor(segundosGrabando / 60)).padStart(1, '0')}:{String(segundosGrabando % 60).padStart(2, '0')}
+            <button type="button" className="tdchat-btn-sec" onClick={() => terminarGrabacion(true)}>Cancelar</button>
+            <button type="button" className="tdchat-btn-pri" onClick={() => terminarGrabacion(false)}>Enviar 🎤</button>
+          </div>
+        )}
         <form onSubmit={enviarMensaje} className="tdchat-form">
           <div className="tdchat-caja">
             {puedeSubirEvidencia && (
@@ -320,7 +479,7 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
               rows={1}
               placeholder="Escribe un mensaje..."
               value={mensaje}
-              onChange={event => setMensaje(event.target.value)}
+              onChange={event => alEscribir(event.target.value)}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault()
@@ -334,8 +493,12 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
                   disabled={subiendo} onClick={() => archivoRef.current?.click()}>{subiendo ? '…' : '📎'}</button>
                 <button type="button" className="tdchat-adjunto" title="Tomar foto" aria-label="Tomar foto"
                   disabled={subiendo} onClick={() => fotoRef.current?.click()}>{subiendo ? '…' : '📷'}</button>
+                <button type="button" className={`tdchat-adjunto ${grabando ? 'activo' : ''}`} title="Nota de voz" aria-label="Grabar nota de voz"
+                  disabled={subiendo} onClick={() => (grabando ? terminarGrabacion(false) : iniciarGrabacion())}>🎤</button>
               </>
             )}
+            <button type="button" className="tdchat-adjunto" title="Compartir mi ubicación" aria-label="Compartir mi ubicación"
+              disabled={ubicando} onClick={compartirUbicacion}>{ubicando ? '…' : '📍'}</button>
           </div>
           <button className="tdchat-enviar" type="submit" disabled={enviando || !mensaje.trim()} aria-label="Enviar mensaje">
             {enviando ? '…' : '➤'}
@@ -378,8 +541,9 @@ const ESTILOS_CHAT = `
   .tdchat-fila.mia { flex-direction: row-reverse; }
   .tdchat-burbuja { display: flex; align-items: center; gap: 10px; max-width: 80%; padding: 8px 18px 8px 8px;
     background: white; color: #111827; border-radius: 30px; box-shadow: 0 6px 18px rgba(0,0,0,0.18);
-    animation: tdchatEntra 0.25s ease-out; }
+    transform-origin: left bottom; animation: tdchatEntraIzq 0.45s cubic-bezier(.2,1.4,.4,1) both; }
   .tdchat-burbuja.mia { flex-direction: row-reverse; padding: 8px 8px 8px 18px; color: white;
+    transform-origin: right bottom; animation-name: tdchatEntraDer;
     background: linear-gradient(135deg, #e85d04, #f97316); }
   .tdchat-burbuja.ancha { border-radius: 20px; align-items: flex-start; min-width: 70%; }
   .tdchat-contenido { min-width: 0; }
@@ -414,11 +578,73 @@ const ESTILOS_CHAT = `
     box-shadow: 0 6px 18px rgba(232,93,4,0.45); transition: transform 0.15s; }
   .tdchat-enviar:hover:not(:disabled) { transform: scale(1.07); }
   .tdchat-enviar:disabled { opacity: 0.5; cursor: default; }
-  @keyframes tdchatEntra { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  /* Burbujas: entran "inflándose" desde su lado, con un pequeño rebote */
+  @keyframes tdchatEntraIzq {
+    0%   { opacity: 0; transform: translateX(-24px) scale(0.6); }
+    60%  { opacity: 1; transform: translateX(3px) scale(1.04); }
+    100% { opacity: 1; transform: none; }
+  }
+  @keyframes tdchatEntraDer {
+    0%   { opacity: 0; transform: translateX(24px) scale(0.6); }
+    60%  { opacity: 1; transform: translateX(-3px) scale(1.04); }
+    100% { opacity: 1; transform: none; }
+  }
+  .tdchat-burbuja:hover { box-shadow: 0 10px 24px rgba(0,0,0,0.28); transition: box-shadow 0.2s; }
+  .tdchat-hora { animation: tdchatAparece 0.6s 0.25s both; }
+  @keyframes tdchatAparece { from { opacity: 0; } to { opacity: 1; } }
+
+  /* Emojis con movimiento (se repiten de vez en cuando, sin marear) */
+  .tdchat-emoji { display: inline-block; transform-origin: 50% 70%; }
+  .tdchat-emoji.rebota  { animation: tdEmojiRebota 2.4s ease-in-out infinite; }
+  .tdchat-emoji.late    { animation: tdEmojiLate 1.3s ease-in-out infinite; }
+  .tdchat-emoji.saluda  { animation: tdEmojiSaluda 2s ease-in-out infinite; transform-origin: 70% 90%; }
+  .tdchat-emoji.asiente { animation: tdEmojiAsiente 2.2s ease-in-out infinite; }
+  .tdchat-emoji.brilla  { animation: tdEmojiBrilla 1.6s ease-in-out infinite; }
+  .tdchat-emoji.maneja  { animation: tdEmojiManeja 2.4s ease-in-out infinite; }
+  .tdchat-emoji.gira    { animation: tdEmojiGira 2.6s ease-in-out infinite; }
+  .tdchat-emoji.rie     { animation: tdEmojiRie 1.2s ease-in-out infinite; }
+  @keyframes tdEmojiRebota { 0%, 60%, 100% { transform: translateY(0); } 20% { transform: translateY(-6px); } 40% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+  @keyframes tdEmojiLate { 0%, 100% { transform: scale(1); } 15% { transform: scale(1.3); } 30% { transform: scale(1); } 45% { transform: scale(1.18); } }
+  @keyframes tdEmojiSaluda { 0%, 50%, 100% { transform: rotate(0); } 10% { transform: rotate(18deg); } 20% { transform: rotate(-10deg); } 30% { transform: rotate(18deg); } 40% { transform: rotate(-6deg); } }
+  @keyframes tdEmojiAsiente { 0%, 55%, 100% { transform: translateY(0) rotate(0); } 15% { transform: translateY(-4px) rotate(-12deg); } 30% { transform: translateY(0) rotate(0); } 42% { transform: translateY(-2px) rotate(-6deg); } }
+  @keyframes tdEmojiBrilla { 0%, 100% { transform: scale(1) rotate(0); filter: brightness(1); } 50% { transform: scale(1.2) rotate(8deg); filter: brightness(1.35) drop-shadow(0 0 4px rgba(253,186,116,0.9)); } }
+  @keyframes tdEmojiManeja { 0% { transform: translateX(0); } 25% { transform: translateX(5px) translateY(-1px); } 50% { transform: translateX(0); } 75% { transform: translateX(3px) translateY(-1px); } 100% { transform: translateX(0); } }
+  @keyframes tdEmojiGira { 0%, 40%, 100% { transform: rotate(0); } 20% { transform: rotate(-35deg); } 30% { transform: rotate(10deg); } }
+  @keyframes tdEmojiRie { 0%, 100% { transform: rotate(0) translateY(0); } 25% { transform: rotate(-10deg) translateY(-2px); } 75% { transform: rotate(10deg) translateY(-2px); } }
+
+  /* Mensaje de solo emojis: grandes y sin fondo de burbuja exagerado */
+  .tdchat-solo-emojis { display: inline-block; margin-top: 6px; font-size: 2.1rem; line-height: 1.15; letter-spacing: 2px; }
+  .tdchat-solo-emojis .tdchat-emoji { animation-duration: 1.6s; }
+
+  /* Logo del encabezado: el camión "avanza" y el botón de enviar late cuando hay texto */
+  .tdchat-logo { animation: tdEmojiManeja 2.4s ease-in-out infinite; }
+  .tdchat-enviar:not(:disabled) { animation: tdchatListo 1.8s ease-in-out infinite; }
+  @keyframes tdchatListo { 0%, 100% { box-shadow: 0 6px 18px rgba(232,93,4,0.45); } 50% { box-shadow: 0 6px 26px rgba(232,93,4,0.85), 0 0 0 6px rgba(249,115,22,0.18); } }
   @media (max-width: 520px) {
     .tdchat-overlay { padding: 0; }
     .tdchat { width: 100%; height: 100%; border-radius: 0; }
     .tdchat-burbuja { max-width: 86%; }
   }
-  @media (prefers-reduced-motion: reduce) { .tdchat-burbuja { animation: none; } }
+  /* Palomitas de leído */
+  .tdchat-check { margin-left: 4px; font-weight: 700; letter-spacing: -2px; color: rgba(255,255,255,0.6); }
+  .tdchat-check.visto { color: #fb923c; text-shadow: 0 0 6px rgba(251,146,60,0.6); }
+  /* "Está escribiendo…" */
+  .tdchat-escribiendo { display: inline-flex; align-items: center; gap: 8px; margin: 2px 0 8px 4px; padding: 6px 12px;
+    background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.85); border-radius: 999px; font-size: 0.75rem; }
+  .tdchat-puntos { display: inline-flex; gap: 3px; }
+  .tdchat-puntos i { width: 6px; height: 6px; border-radius: 50%; background: #fb923c; animation: tdPunto 1.2s infinite ease-in-out; }
+  .tdchat-puntos i:nth-child(2) { animation-delay: 0.15s; }
+  .tdchat-puntos i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes tdPunto { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
+  /* Grabación */
+  .tdchat-grabando { display: flex; align-items: center; gap: 10px; margin: 0 12px; padding: 8px 12px; border-radius: 14px;
+    background: rgba(220,38,38,0.15); color: white; font-size: 0.82rem; }
+  .tdchat-grabando .tdchat-btn-sec { margin-left: auto; }
+  .tdchat-rec { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; animation: tdRec 1s infinite; }
+  @keyframes tdRec { 50% { opacity: 0.25; } }
+  .tdchat-adjunto.activo { background: #fee2e2; }
+  .tdchat-enlace { color: inherit; font-weight: 700; text-decoration: underline; }
+  @media (prefers-reduced-motion: reduce) {
+    .tdchat-burbuja, .tdchat-hora, .tdchat-emoji, .tdchat-logo, .tdchat-enviar, .tdchat-puntos i, .tdchat-rec { animation: none !important; }
+  }
 `
