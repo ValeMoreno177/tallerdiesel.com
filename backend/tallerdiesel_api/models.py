@@ -443,6 +443,7 @@ class Notificacion(models.Model):
     leida         = models.BooleanField(default=False)
     tipo          = models.CharField(max_length=50, default='solicitud')
     referencia_id = models.IntegerField(null=True, blank=True)
+    archivada      = models.BooleanField(default=False)
     fecha         = models.DateTimeField(auto_now_add=True)
 
     class Meta:

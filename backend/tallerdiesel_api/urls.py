@@ -29,6 +29,7 @@ urlpatterns = [
     path('solicitudes-pendientes/<int:pk>/atender/', views.marcar_solicitud_atendida),
     path('notificaciones/',                 views.mis_notificaciones),
     path('notificaciones/<int:pk>/leer/',   views.marcar_leida),
+    path('notificaciones/<int:pk>/restaurar/', views.restaurar_notificacion),
     path('notificaciones/leer-todas/',      views.marcar_todas_leidas),
     path('empresas/',                       views.lista_empresas),
     path('proveedores/crear/',              views.crear_proveedor),

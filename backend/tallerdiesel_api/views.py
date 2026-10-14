@@ -851,6 +851,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             # Al finalizar: se le pide al cliente calificar y el coordinador recibe el siguiente en espera
             if ticket.estatus == 'terminado':
                 al_finalizar(ticket)
+                # Conserva los avisos del ticket en la base de datos, pero sácalos de la bandeja activa.
+                # La invitación a calificar permanece activa hasta que el cliente la atienda.
+                Notificacion.objects.filter(referencia_id=ticket.id).exclude(
+                    tipo='calificar_servicio', leida=False,
+                ).update(archivada=True)
 
         # Registrar asignación de técnico en bitácora
         if ticket.tecnico_id and ticket.tecnico_id != tecnico_anterior_id:
@@ -1311,6 +1316,10 @@ class TicketViewSet(viewsets.ModelViewSet):
                 titulo=f'Respuesta de finalización — {ticket.etiqueta}',
                 mensaje=texto_notif, tipo='cambio_estatus', referencia_id=ticket.id,
             )
+        if acepta:
+            Notificacion.objects.filter(referencia_id=ticket.id).exclude(
+                tipo='calificar_servicio', leida=False,
+            ).update(archivada=True)
         return Response(TicketSerializer(ticket, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
@@ -1945,8 +1954,23 @@ def mis_notificaciones(request):
     from django.core.cache import cache
     if request.user.rol in ('admin', 'coordinador') and cache.add('sla_revisado', True, timeout=1):
         revisar_alertas_sla()
-    notifs = Notificacion.objects.filter(destinatario=request.user).order_by('-fecha', '-id')[:200]
+    archivadas = request.query_params.get('archivadas') == 'true'
+    notifs = Notificacion.objects.filter(
+        destinatario=request.user, archivada=archivadas,
+    ).order_by('-fecha', '-id')[:200]
     return Response(NotificacionSerializer(notifs, many=True).data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def restaurar_notificacion(request, pk):
+    try:
+        notif = Notificacion.objects.get(pk=pk, destinatario=request.user)
+        notif.archivada = False
+        notif.save(update_fields=['archivada'])
+        return Response({'ok': True})
+    except Notificacion.DoesNotExist:
+        return Response({'error': 'No encontrada.'}, status=404)
 
 
 @api_view(['POST'])

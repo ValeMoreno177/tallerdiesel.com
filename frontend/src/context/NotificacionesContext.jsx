@@ -86,6 +86,7 @@ const NotificacionesContext = createContext(null)
 export function NotificacionesProvider({ children }) {
   const { user } = useAuth()
   const [notifs, setNotifs] = useState([])
+  const [archivadas, setArchivadas] = useState([])
   const [sonidoActivo, setSonidoActivo] = useState(true)
   const [aviso, setAviso] = useState(null)
   const vistas = useRef(null)          // ids ya conocidos; null = aún no se hace la primera carga
@@ -109,6 +110,7 @@ export function NotificacionesProvider({ children }) {
   useEffect(() => {
     vistas.current = null
     setNotifs([])
+    setArchivadas([])
     setAviso(null)
     // Solo al CERRAR sesión de verdad (había usuario y ya no): la próxima vez se vuelve a avisar lo pendiente.
     // (Al recargar la página el usuario también arranca vacío un instante: eso no cuenta como cierre.)
@@ -156,6 +158,17 @@ export function NotificacionesProvider({ children }) {
     if (hayNuevas) refrescarAhora()
   }, [user?.id])
 
+  const cargarArchivadas = useCallback(async () => {
+    const { data } = await api.get('/notificaciones/', { params: { archivadas: 'true' } })
+    setArchivadas(data)
+  }, [])
+
+  const restaurarNotificacion = useCallback(async (id) => {
+    await api.post(`/notificaciones/${id}/restaurar/`)
+    setArchivadas(prev => prev.filter(n => n.id !== id))
+    await cargar()
+  }, [cargar])
+
   // Cada segundo (NOTIFICACIONES_MS), aunque la pestaña esté en segundo plano
   useAutoRefresh(cargar, { activo: !!user, inmediato: true, intervalo: NOTIFICACIONES_MS })
 
@@ -170,7 +183,8 @@ export function NotificacionesProvider({ children }) {
   }, [])
 
   const valor = {
-    notifs, noLeidas: notifs.filter(n => !n.leida).length,
+    notifs, archivadas, cargarArchivadas, restaurarNotificacion,
+    noLeidas: notifs.filter(n => !n.leida).length,
     marcarLeida, marcarTodas, recargar: cargar,
     sonidoActivo, setSonidoActivo,
   }

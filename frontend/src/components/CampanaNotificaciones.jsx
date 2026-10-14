@@ -8,11 +8,17 @@ import api from '../api/client'
 // Las notificaciones se consultan periódicamente desde NotificacionesProvider (una sola vez para toda
 // la app, con sonido y aviso flotante). Esta campana solo las muestra.
 export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
-  const { notifs, noLeidas, marcarLeida, marcarTodas, sonidoActivo, setSonidoActivo } = useNotificaciones()
+  const { notifs, archivadas, cargarArchivadas, restaurarNotificacion, noLeidas, marcarLeida, marcarTodas, sonidoActivo, setSonidoActivo } = useNotificaciones()
   const [abierto, setAbierto] = useState(false)
+  const [vista, setVista] = useState('activas')
   const ref          = useRef(null)
   const navigate     = useNavigate()
   const { user }     = useAuth()
+  const lista = vista === 'papelera' ? archivadas : notifs
+
+  useEffect(() => {
+    if (abierto && vista === 'papelera') cargarArchivadas()
+  }, [abierto, vista, cargarArchivadas])
 
   useEffect(() => {
     const handleClick = (e) => {
@@ -132,10 +138,10 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
         }}>
           <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>
-              Notificaciones {noLeidas > 0 && <span style={{ color: '#dc2626' }}>({noLeidas})</span>}
+              Notificaciones
             </span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              {noLeidas > 0 && (
+              {vista === 'activas' && noLeidas > 0 && (
                 <button onClick={marcarTodas}
                   style={{ fontSize: '0.75rem', color: 'var(--azul)', background: 'none', border: 'none', cursor: 'pointer' }}>
                   Marcar todas leídas
@@ -144,13 +150,21 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
             </div>
           </div>
 
+          <div style={{ display: 'flex', borderBottom: '1px solid #f3f4f6' }}>
+            {[['activas', `Activas${noLeidas ? ` (${noLeidas})` : ''}`], ['papelera', 'Papelera']].map(([id, label]) => (
+              <button key={id} onClick={() => setVista(id)} style={{ flex: 1, padding: '0.65rem', border: 0, cursor: 'pointer', background: vista === id ? '#eff6ff' : 'white', color: vista === id ? 'var(--azul)' : '#6b7280', fontWeight: vista === id ? 700 : 400 }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div style={{ maxHeight: 420, overflowY: 'auto' }}>
-            {notifs.length === 0 && (
+            {lista.length === 0 && (
               <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af', fontSize: '0.875rem' }}>
                 🔔 Sin notificaciones
               </div>
             )}
-            {notifs.map(n => (
+            {lista.map(n => (
               <div key={n.id} style={{
                 padding: '0.875rem 1.25rem',
                 borderBottom: '1px solid #f9fafb',
@@ -169,7 +183,11 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
                     <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 4 }}>
                       {formatFecha(n.fecha)}
                     </div>
-                    {!n.leida && (
+                    {vista === 'papelera' ? (
+                      <button onClick={() => restaurarNotificacion(n.id)} style={{ marginTop: 6, background: 'none', color: 'var(--azul)', border: 0, cursor: 'pointer', fontSize: '0.75rem' }}>
+                        Restaurar
+                      </button>
+                    ) : !n.leida && (
                       <button
                         onClick={() => handleRellenar(n)}
                         style={{
@@ -181,7 +199,7 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
                       </button>
                     )}
                   </div>
-                  {!n.leida && (
+                  {vista !== 'papelera' && !n.leida && (
                     <span style={{ width: 8, height: 8, background: 'var(--azul)', borderRadius: '50%', flexShrink: 0, marginTop: 4 }} />
                   )}
                 </div>
