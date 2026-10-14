@@ -17,7 +17,7 @@ const FORM_VACIO = {
   sal_costo: '0', mo_costo: '0', ref_costo: '0',
   sal_ganancia: '0', mo_ganancia: '0', ref_ganancia: '0',
   factura: '', fecha_factura: '', estatus_factura: 'pendiente',
-  coordinador: '', operador_nombre: '', tecnico: '',
+  coordinador: '', tecnico: '',
 }
 
 function calcular(f) {
@@ -59,7 +59,7 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
     if (!esNuevo) {
       // Normalizar null/undefined a '' para evitar selects no controlados
       const t = { ...FORM_VACIO, ...ticket }
-      const nullToStr = ['coordinador','operador_nombre','tecnico','factura','fecha_factura','estatus_factura','reparacion','lugar','unidad','tipo_unidad','empresa']
+      const nullToStr = ['coordinador','tecnico','factura','fecha_factura','estatus_factura','reparacion','lugar','operador','unidad','tipo_unidad','empresa']
       nullToStr.forEach(k => { if (t[k] == null) t[k] = '' })
       const nullToNum = ['sal_costo','mo_costo','ref_costo','sal_ganancia','mo_ganancia','ref_ganancia']
       nullToNum.forEach(k => { if (t[k] == null) t[k] = '0' })
@@ -92,11 +92,10 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
     // Convertir strings vacíos a null para campos de fecha y FK
     const payload = {
       ...form,
-      coordinador:     form.coordinador     || null,
-      tecnico:         form.tecnico         || null,
-      fecha_factura:   form.fecha_factura   || null,
-      factura:         form.factura         || '',
-      operador_nombre: (form.operador_nombre || '').trim(),
+      coordinador:   form.coordinador   || null,
+      tecnico:       form.tecnico       || null,
+      fecha_factura: form.fecha_factura || null,
+      factura:       form.factura       || '',
     }
     // Si el servicio era "directo con técnico" y el Coordinador lo toma (queda con
     // coordinador asignado y sin técnico), pasa automáticamente a tipo "coordinador"
@@ -133,7 +132,7 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 720 }} onClick={e => e.stopPropagation()}>
-        <h3 className="modal-title">{esNuevo ? '➕ Agregar nuevo servicio' : `et ${ticket.etiqueta || ticket.ticket_id}`}</h3>
+        <h3 className="modal-title">{esNuevo ? '➕ Agregar nuevo servicio' : `Editar ticket ${ticket.etiqueta || ticket.ticket_id}`}</h3>
         <p className="modal-subtitle">Los totales se calculan automáticamente</p>
 
         {esTerminado && (
@@ -189,7 +188,7 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
           <Row label="Tipo de unidad" name="tipo_unidad" placeholder="Tractocamión, Caja seca..." />
           <Row label="Unidad"   name="unidad"   placeholder="Kenworth T680" />
           <Row label="Lugar"    name="lugar"    placeholder="Ciudad, Estado" />
-          <Row label="Cliente" name="operador" placeholder="Nombre del cliente" />
+          <Row label="Operador" name="operador" placeholder="Nombre del operador" />
 
           {/* COORDINADOR */}
           <div className="form-group">
@@ -216,18 +215,6 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
               <option value="">Sin asignar</option>
               {tecnicosList.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
             </select>
-          </div>
-
-          {/* OPERADOR — texto libre */}
-          <div className="form-group">
-            <label className="form-label">Operador</label>
-            <input
-              className="form-input"
-              type="text"
-              placeholder="Nombre del operador"
-              value={form.operador_nombre ?? ''}
-              onChange={e => set('operador_nombre', e.target.value)}
-            />
           </div>
 
           <div className="form-group" style={{ gridColumn: '1/-1' }}>
@@ -686,7 +673,7 @@ export default function BitacoraPage({ rol }) {
                       <td>{t.factura || '—'}</td>
                       <td>{t.fecha_factura || '—'}</td>
                       <td>{t.estatus_factura ? <span className={`badge badge-${t.estatus_factura}`}>{t.estatus_factura}</span> : '—'}</td>
-                      <td>{t.operador_nombre || '—'}</td>
+                      <td>{t.operador || '—'}</td>
                       <td>{t.coordinador_nombre || '—'}</td>
                       {rol === 'admin' && <td className="td-naranja">{fmt(t.comision)}</td>}
                       <td>
