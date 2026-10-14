@@ -7,7 +7,7 @@ router = DefaultRouter()
 router.register(r'usuarios', views.UsuarioViewSet)
 router.register(r'tickets', views.TicketViewSet)
 router.register(r'tecnicos', views.TecnicoViewSet)
-router.register(r'proveedores', views.ProveedorViewSet)
+router.register(r'operadores', views.OperadorViewSet)
 router.register(r'unidades-flotilla', views.UnidadFlotillaViewSet, basename='unidadflotilla')
 
 urlpatterns = [
@@ -32,6 +32,6 @@ urlpatterns = [
     path('notificaciones/<int:pk>/restaurar/', views.restaurar_notificacion),
     path('notificaciones/leer-todas/',      views.marcar_todas_leidas),
     path('empresas/',                       views.lista_empresas),
-    path('proveedores/crear/',              views.crear_proveedor),
+    path('operadores/crear/',              views.crear_operador),
     path('empresa-config/',                 views.empresa_config),
 ]

@@ -1,8 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import (Usuario, Ticket, Tecnico, Opinion, Proveedor,
-                     SolicitudServicio, Notificacion, ComentarioTicket, TokenVerificacion,
-                     ConfiguracionEmpresa)
+from .models import (Usuario, Ticket, Tecnico, Opinion, Operador,
+                    SolicitudServicio, Notificacion, ComentarioTicket, TokenVerificacion,
+                    ConfiguracionEmpresa)
 
 @admin.register(Usuario)
 class UsuarioAdmin(UserAdmin):
@@ -37,8 +37,8 @@ class TecnicoAdmin(admin.ModelAdmin):
 class OpinionAdmin(admin.ModelAdmin):
     list_display = ['tecnico', 'ticket', 'nombre_autor', 'calificacion', 'fecha']
 
-@admin.register(Proveedor)
-class ProveedorAdmin(admin.ModelAdmin):
+@admin.register(Operador)
+class OperadorAdmin(admin.ModelAdmin):
     list_display = ['nombre', 'telefono', 'email', 'activo']
 
 @admin.register(SolicitudServicio)

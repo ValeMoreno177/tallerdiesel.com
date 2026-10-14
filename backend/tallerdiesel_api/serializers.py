@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
+from .models import (Ticket, Tecnico, Opinion, Operador , SolicitudServicio,
                       Notificacion, ComentarioTicket, ConfiguracionEmpresa, UnidadFlotilla,
                       EvidenciaTicket)
 
@@ -139,9 +139,9 @@ class ConfiguracionEmpresaSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'actualizado_en']
 
 
-class ProveedorSerializer(serializers.ModelSerializer):
+class OperadorSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Proveedor
+        model = Operador
         fields = '__all__'
 
 
@@ -171,7 +171,7 @@ class EvidenciaTicketSerializer(serializers.ModelSerializer):
 
 class TicketSerializer(serializers.ModelSerializer):
     coordinador_nombre  = serializers.SerializerMethodField()
-    proveedor_nombre    = serializers.SerializerMethodField()
+    operador_nombre    = serializers.SerializerMethodField()
     tecnico_nombre       = serializers.SerializerMethodField()
     eliminado_por_nombre = serializers.SerializerMethodField()
     estatus_display      = serializers.CharField(source='get_estatus_display', read_only=True)
@@ -206,8 +206,8 @@ class TicketSerializer(serializers.ModelSerializer):
     def get_eliminado_por_nombre(self, obj):
         return obj.eliminado_por.nombre_completo if obj.eliminado_por else None
 
-    def get_proveedor_nombre(self, obj):
-        return obj.proveedor.nombre if obj.proveedor else None
+    def get_operador_nombre(self, obj):
+        return obj.operador.nombre if obj.operador else None
 
     def get_tecnico_nombre(self, obj):
         return obj.tecnico.nombre if obj.tecnico else None

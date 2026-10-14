@@ -147,7 +147,7 @@ class ConfiguracionEmpresa(models.Model):
         super().save(*args, **kwargs)
 
 
-class Proveedor(models.Model):
+class Operador(models.Model):
     nombre  = models.CharField(max_length=200)
     telefono= models.CharField(max_length=20, blank=True)
     email   = models.EmailField(blank=True)
@@ -184,7 +184,7 @@ class Ticket(models.Model):
 
     coordinador= models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
                     related_name='tickets_coordinados', limit_choices_to={'rol__in':['coordinador','admin']})
-    proveedor  = models.ForeignKey(Proveedor, on_delete=models.SET_NULL, null=True, blank=True)
+    operador   = models.ForeignKey(Operador, on_delete=models.SET_NULL, null=True, blank=True)
     cliente    = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
                     related_name='tickets_cliente', limit_choices_to={'rol':'cliente'})
     tecnico    = models.ForeignKey('Tecnico', on_delete=models.SET_NULL, null=True, blank=True,
@@ -230,8 +230,8 @@ class Ticket(models.Model):
         ordering = ['-fecha_creacion']
         constraints = [
             models.UniqueConstraint(fields=['ticket_id'],
-                                     condition=models.Q(eliminado=False) & ~models.Q(ticket_id=''),
-                                     name='ticket_id_unico_entre_activos'),
+                                    condition=models.Q(eliminado=False) & ~models.Q(ticket_id=''),
+                                    name='ticket_id_unico_entre_activos'),
         ]
 
     def __str__(self):

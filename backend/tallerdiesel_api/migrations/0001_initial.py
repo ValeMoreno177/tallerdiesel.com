@@ -44,7 +44,7 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.CreateModel(
-            name='Proveedor',
+            name='Operador',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('nombre', models.CharField(max_length=200)),
@@ -104,7 +104,7 @@ class Migration(migrations.Migration):
                 ('fecha_actualizacion', models.DateTimeField(auto_now=True)),
                 ('cliente', models.ForeignKey(blank=True, limit_choices_to={'rol': 'cliente'}, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='tickets_cliente', to=settings.AUTH_USER_MODEL)),
                 ('coordinador', models.ForeignKey(blank=True, limit_choices_to={'rol__in': ['coordinador', 'admin']}, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='tickets_coordinados', to=settings.AUTH_USER_MODEL)),
-                ('proveedor', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='tallerdiesel_api.proveedor')),
+                ('operador_obj', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='tallerdiesel_api.operador')),
             ],
             options={
                 'ordering': ['-fecha_creacion'],

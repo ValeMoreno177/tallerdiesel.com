@@ -17,7 +17,7 @@ const FORM_VACIO = {
   sal_costo: '0', mo_costo: '0', ref_costo: '0',
   sal_ganancia: '0', mo_ganancia: '0', ref_ganancia: '0',
   factura: '', fecha_factura: '', estatus_factura: 'pendiente',
-  coordinador: '', proveedor: '', tecnico: '',
+  coordinador: '', operador_nombre: '', tecnico: '',
 }
 
 function calcular(f) {
@@ -45,7 +45,7 @@ function calcular(f) {
 // ─────────────────────────────────────────────
 // Modal CRUD
 // ─────────────────────────────────────────────
-function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList, tecnicosList, onClose, onSaved, onNuevoProveedor, rol }) {
+function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, onClose, onSaved, rol }) {
   const { user } = useAuth()
   const esAdmin = user?.rol === 'admin'
   const esCoord = user?.rol === 'coordinador'
@@ -59,7 +59,7 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
     if (!esNuevo) {
       // Normalizar null/undefined a '' para evitar selects no controlados
       const t = { ...FORM_VACIO, ...ticket }
-      const nullToStr = ['coordinador','proveedor','tecnico','factura','fecha_factura','estatus_factura','reparacion','lugar','operador','unidad','tipo_unidad','empresa']
+      const nullToStr = ['coordinador','operador_nombre','tecnico','factura','fecha_factura','estatus_factura','reparacion','lugar','unidad','tipo_unidad','empresa']
       nullToStr.forEach(k => { if (t[k] == null) t[k] = '' })
       const nullToNum = ['sal_costo','mo_costo','ref_costo','sal_ganancia','mo_ganancia','ref_ganancia']
       nullToNum.forEach(k => { if (t[k] == null) t[k] = '0' })
@@ -73,9 +73,7 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
   })
 
   const [nuevaEmpresa,    setNuevaEmpresa]    = useState('')
-  const [nuevoProveedor,  setNuevoProveedor]  = useState('')
   const [addingEmpresa,   setAddingEmpresa]   = useState(false)
-  const [addingProveedor, setAddingProveedor] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
@@ -88,27 +86,17 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
     if (nuevaEmpresa.trim()) { set('empresa', nuevaEmpresa.trim()); setAddingEmpresa(false) }
   }
 
-  const confirmarProveedor = async () => {
-    if (!nuevoProveedor.trim()) return
-    try {
-      const { data } = await api.post('/proveedores/crear/', { nombre: nuevoProveedor.trim() })
-      onNuevoProveedor(data)
-      set('proveedor', String(data.id))
-      setNuevoProveedor(''); setAddingProveedor(false)
-    } catch { setError('No se pudo crear el proveedor.') }
-  }
-
   const handleSave = async () => {
     if (!form.empresa || !form.fecha) { setError('Empresa y fecha son obligatorios.'); return }
     setSaving(true); setError('')
     // Convertir strings vacíos a null para campos de fecha y FK
     const payload = {
       ...form,
-      coordinador:   form.coordinador   || null,
-      proveedor:     form.proveedor     || null,
-      tecnico:       form.tecnico       || null,
-      fecha_factura: form.fecha_factura || null,
-      factura:       form.factura       || '',
+      coordinador:     form.coordinador     || null,
+      tecnico:         form.tecnico         || null,
+      fecha_factura:   form.fecha_factura   || null,
+      factura:         form.factura         || '',
+      operador_nombre: (form.operador_nombre || '').trim(),
     }
     // Si el servicio era "directo con técnico" y el Coordinador lo toma (queda con
     // coordinador asignado y sin técnico), pasa automáticamente a tipo "coordinador"
@@ -145,7 +133,7 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 720 }} onClick={e => e.stopPropagation()}>
-        <h3 className="modal-title">{esNuevo ? '➕ Agregar nuevo servicio' : `Editar ticket ${ticket.etiqueta || ticket.ticket_id}`}</h3>
+        <h3 className="modal-title">{esNuevo ? '➕ Agregar nuevo servicio' : `et ${ticket.etiqueta || ticket.ticket_id}`}</h3>
         <p className="modal-subtitle">Los totales se calculan automáticamente</p>
 
         {esTerminado && (
@@ -230,25 +218,16 @@ function ModalTicket({ ticket, coordinadoresList, proveedoresList, empresasList,
             </select>
           </div>
 
-          {/* PROVEEDOR */}
+          {/* OPERADOR — texto libre */}
           <div className="form-group">
-            <label className="form-label">Proveedor</label>
-            {addingProveedor ? (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="form-input" placeholder="Nombre del proveedor" autoFocus
-                  value={nuevoProveedor} onChange={e => setNuevoProveedor(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && confirmarProveedor()} style={{ flex: 1 }} />
-                <button className="btn btn-primary btn-sm" onClick={confirmarProveedor}>✓</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setAddingProveedor(false)}>✕</button>
-              </div>
-            ) : (
-              <select className="form-select" value={form.proveedor}
-                onChange={e => e.target.value === '__nuevo__' ? setAddingProveedor(true) : set('proveedor', e.target.value)}>
-                <option value="">Sin proveedor</option>
-                {proveedoresList.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                <option value="__nuevo__">➕ Agregar nuevo proveedor...</option>
-              </select>
-            )}
+            <label className="form-label">Operador</label>
+            <input
+              className="form-input"
+              type="text"
+              placeholder="Nombre del operador"
+              value={form.operador_nombre ?? ''}
+              onChange={e => set('operador_nombre', e.target.value)}
+            />
           </div>
 
           <div className="form-group" style={{ gridColumn: '1/-1' }}>
@@ -346,7 +325,6 @@ function ModalEliminar({ ticket, onClose, onDeleted }) {
 export default function BitacoraPage({ rol }) {
   const { user } = useAuth()
   const [tickets,       setTickets]       = useState([])
-  const [proveedores,   setProveedores]   = useState([])
   const [coordinadores, setCoordinadores] = useState([])
   const [empresas,      setEmpresas]      = useState([])
   const [tecnicos,      setTecnicos]      = useState([])
@@ -396,16 +374,14 @@ export default function BitacoraPage({ rol }) {
     paginasCargadas.current = 1
     Promise.all([
       api.get('/tickets/'),
-      api.get('/proveedores/'),
       api.get('/usuarios/coordinadores/'),
       api.get('/empresas/'),
       api.get('/tecnicos/'),
-    ]).then(([t, p, c, e, tec]) => {
+    ]).then(([t, c, e, tec]) => {
       const allTickets = t.data.results || t.data
       setTickets(allTickets)
       setPaginaSiguiente(t.data.next || null)
       setTotalTickets(t.data.count ?? allTickets.length)
-      setProveedores(p.data.results || p.data)
       setCoordinadores(c.data)
       setEmpresas(e.data)
       setTecnicos(tec.data.results || tec.data)
@@ -468,8 +444,6 @@ export default function BitacoraPage({ rol }) {
       alert('No se pudo restaurar. ' + (e?.response?.data?.error || ''))
     } finally { setRestaurando(null) }
   }
-
-  const handleNuevoProveedor = (prov) => setProveedores(prev => [...prev, prov])
 
   const empresasUnicas = [...new Set(tickets.map(t => t.empresa).filter(Boolean))].sort()
 
@@ -671,7 +645,7 @@ export default function BitacoraPage({ rol }) {
                     <th>Costo</th><th>Ganancia</th><th>Total</th><th>IVA</th>
                     {rol === 'admin' && <><th>Neto</th><th>ISR</th><th>Total F</th></>}
                     <th>Factura</th><th>F.Fact.</th><th>Est.Fact.</th>
-                    <th>Proveedor</th><th>Coordinador</th>
+                    <th>Operador</th><th>Coordinador</th>
                     {rol === 'admin' && <th>Comisión</th>}
                     <th>Acciones</th>
                   </tr>
@@ -712,7 +686,7 @@ export default function BitacoraPage({ rol }) {
                       <td>{t.factura || '—'}</td>
                       <td>{t.fecha_factura || '—'}</td>
                       <td>{t.estatus_factura ? <span className={`badge badge-${t.estatus_factura}`}>{t.estatus_factura}</span> : '—'}</td>
-                      <td>{t.proveedor_nombre || '—'}</td>
+                      <td>{t.operador_nombre || '—'}</td>
                       <td>{t.coordinador_nombre || '—'}</td>
                       {rol === 'admin' && <td className="td-naranja">{fmt(t.comision)}</td>}
                       <td>
@@ -747,12 +721,10 @@ export default function BitacoraPage({ rol }) {
         <ModalTicket
           ticket={selected}
           coordinadoresList={coordinadores}
-          proveedoresList={proveedores}
           empresasList={empresas}
           tecnicosList={tecnicos}
           onClose={closeModal}
           onSaved={fetchAll}
-          onNuevoProveedor={handleNuevoProveedor}
           rol={rol}
         />
       )}

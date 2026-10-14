@@ -21,7 +21,7 @@ import io
 from PIL import Image, UnidentifiedImageError
 from threading import Thread
 
-from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
+from .models import (Ticket, Tecnico, Opinion, Operador, SolicitudServicio,
                      Notificacion, ComentarioTicket, TokenVerificacion, ConfiguracionEmpresa,
                      CodigoRecuperacion, UnidadFlotilla, EvidenciaTicket, FotoPerfil)
 from .servicios import (puede_gestionar_ticket, reclamar_ticket, asignar_siguiente_en_espera,
@@ -29,7 +29,7 @@ from .servicios import (puede_gestionar_ticket, reclamar_ticket, asignar_siguien
 from .emails import enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
 from .serializers import (
     UsuarioSerializer, RegistroSerializer, TicketSerializer,
-    TecnicoSerializer, OpinionSerializer, ProveedorSerializer,
+    TecnicoSerializer, OpinionSerializer, OperadorSerializer,
     SolicitudServicioSerializer, NotificacionSerializer, ComentarioTicketSerializer,
     ConfiguracionEmpresaSerializer, UnidadFlotillaSerializer, EvidenciaTicketSerializer
 )
@@ -111,7 +111,7 @@ def generar_pdf_ticket(ticket):
         ['Tipo de unidad', ticket.tipo_unidad or '—'],
         ['Unidad', ticket.unidad or '—'],
         ['Lugar', ticket.lugar or '—'],
-        ['Cliente', ticket.operador or '—'],
+        ['Cliente', ticket.operador.nombre if ticket.operador else '—'],
         ['Técnico asignado', ticket.tecnico.nombre if ticket.tecnico else 'Sin asignar'],
         ['Coordinador', ticket.coordinador.nombre_completo if ticket.coordinador else 'Sin asignar'],
     ]
@@ -236,7 +236,7 @@ class SoloAdmin(BasePermission):
 
 
 class LecturaPublicaEdicionConPermiso(BasePermission):
-    """Catálogos (técnicos, proveedores): lectura pública, escritura solo
+    """Catálogos (técnicos, operadores): lectura pública, escritura solo
     para Administrador o Coordinador con permiso de edición otorgado."""
 
     def has_permission(self, request, view):
@@ -1714,11 +1714,11 @@ class TecnicoViewSet(viewsets.ModelViewSet):
         return Response(OpinionSerializer(opinion).data, status=201)
 
 
-# ── Proveedores ───────────────────────────────────────────────────────────────
+# ── Operadores ───────────────────────────────────────────────────────────────
 
-class ProveedorViewSet(viewsets.ModelViewSet):
-    queryset = Proveedor.objects.filter(activo=True)
-    serializer_class = ProveedorSerializer
+class OperadorViewSet(viewsets.ModelViewSet):
+    queryset = Operador.objects.filter(activo=True)
+    serializer_class = OperadorSerializer
     permission_classes = [EsAdminOPermisoEdicion]
 
 
@@ -1755,13 +1755,13 @@ def lista_empresas(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def crear_proveedor(request):
-    """Crea un nuevo proveedor rápidamente desde el modal."""
+def crear_Operador(request):
+    """Crea un nuevo operador rápidamente desde el modal."""
     nombre = request.data.get('nombre', '').strip()
     if not nombre:
         return Response({'error': 'El nombre es requerido.'}, status=400)
-    prov, created = Proveedor.objects.get_or_create(nombre=nombre)
-    return Response({'id': prov.id, 'nombre': prov.nombre, 'created': created}, status=201)
+    oper, created = Operador.objects.get_or_create(nombre=nombre)
+    return Response({'id': oper.id, 'nombre': oper.nombre, 'created': created}, status=201)
 
 
 @api_view(['POST'])
