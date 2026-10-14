@@ -184,7 +184,6 @@ class Ticket(models.Model):
 
     coordinador= models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
                     related_name='tickets_coordinados', limit_choices_to={'rol__in':['coordinador','admin']})
-    proveedor  = models.ForeignKey(Proveedor, on_delete=models.SET_NULL, null=True, blank=True)
     cliente    = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
                     related_name='tickets_cliente', limit_choices_to={'rol':'cliente'})
     tecnico    = models.ForeignKey('Tecnico', on_delete=models.SET_NULL, null=True, blank=True,
