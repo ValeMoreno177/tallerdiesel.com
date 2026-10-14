@@ -4,6 +4,7 @@ import Sidebar from '../components/Sidebar'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import useAutoRefresh from '../hooks/useAutoRefresh'
 import ModalDetalleTicket from '../components/ModalDetalleTicket'
+import ChatTicketModal, { BotonChat } from '../components/ChatTicketModal'
 import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 
@@ -353,6 +354,7 @@ export default function BitacoraPage({ rol }) {
   const [busqueda,      setBusqueda]      = useState('')
   const [tipoFiltro,    setTipoFiltro]    = useState('todos')
   const [ticketNotif,   setTicketNotif]   = useState(null)
+  const [ticketChat, setTicketChat] = useState(null)
   const [modal,         setModal]         = useState(null)
   const [selected,      setSelected]      = useState(null)
   const [empresaFiltro, setEmpresaFiltro] = useState([])   // Excel-like column filter (vacío = todas)
@@ -549,7 +551,10 @@ export default function BitacoraPage({ rol }) {
               style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
               ＋ Agregar nuevo servicio
             </button>
-            <CampanaNotificaciones onAbrirTicket={(t) => { setTicketNotif(t) }} />
+            <CampanaNotificaciones
+              onAbrirTicket={setTicketNotif}
+              onAbrirChat={setTicketChat}
+            />
           </div>
         </div>
 
@@ -659,6 +664,7 @@ export default function BitacoraPage({ rol }) {
                     </th>
                     <th className="col-sticky-3">Fecha</th>
                     <th className="col-sticky-4">Estatus</th>
+                    <th>Chat</th>
                     <th>Tipo Unidad</th>
                     <th>Unidad</th><th>Lugar</th><th>Técnico</th><th>Reparación</th>
                     {rol === 'admin' && <><th>Sal.C</th><th>M.O.C</th><th>Ref.C</th></>}
@@ -672,7 +678,7 @@ export default function BitacoraPage({ rol }) {
                 </thead>
                 <tbody>
                   {filtrados.length === 0 && (
-                    <tr><td colSpan={26} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>No hay tickets</td></tr>
+                    <tr><td colSpan={rol === 'admin' ? 27 : 20} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>No hay tickets</td></tr>
                   )}
                   {filtrados.map(t => (
                     <tr key={t.id} style={{ opacity: t.estatus === 'terminado' ? 0.8 : 1 }}>
@@ -683,6 +689,7 @@ export default function BitacoraPage({ rol }) {
                         <span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span>
                         {t.estatus === 'terminado' && <span title="Cerrado" style={{ marginLeft: 4 }}>🔒</span>}
                       </td>
+                      <td><BotonChat ticket={t} compacto onClick={() => setTicketChat(t)} /></td>
                       <td>{t.tipo_unidad || '—'}</td>
                       <td>{t.unidad}</td>
                       <td>{t.lugar}</td>
@@ -768,6 +775,7 @@ export default function BitacoraPage({ rol }) {
           onUpdated={fetchAll}
         />
       )}
+<<<<<<< HEAD
 
       {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
@@ -783,6 +791,15 @@ export default function BitacoraPage({ rol }) {
           </div>
         </div>
       </div>
+=======
+      {ticketChat && (
+        <ChatTicketModal
+          ticket={ticketChat}
+          onClose={() => setTicketChat(null)}
+          onRead={fetchAll}
+        />
+      )}
+>>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }

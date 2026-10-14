@@ -7,7 +7,7 @@ import api from '../api/client'
 
 // Las notificaciones se consultan periódicamente desde NotificacionesProvider (una sola vez para toda
 // la app, con sonido y aviso flotante). Esta campana solo las muestra.
-export default function CampanaNotificaciones({ onAbrirTicket }) {
+export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
   const { notifs, noLeidas, marcarLeida, marcarTodas, sonidoActivo, setSonidoActivo } = useNotificaciones()
   const [abierto, setAbierto] = useState(false)
   const ref          = useRef(null)
@@ -33,6 +33,11 @@ export default function CampanaNotificaciones({ onAbrirTicket }) {
     // queda pendiente hasta que el cliente envíe su calificación.
     if (n.tipo === 'calificar_servicio') {
       pedirCalificacion(n.referencia_id)
+      return
+    }
+    if (n.tipo === 'comentario' && n.referencia_id && onAbrirChat) {
+      setAbierto(false)
+      onAbrirChat({ id: n.referencia_id })
       return
     }
     await marcarLeida(n.id)

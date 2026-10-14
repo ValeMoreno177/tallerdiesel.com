@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Sidebar from '../components/Sidebar'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import ModalDetalleTicket from '../components/ModalDetalleTicket'
+import ChatTicketModal from '../components/ChatTicketModal'
 import api from '../api/client'
 import useAutoRefresh from '../hooks/useAutoRefresh'
 
@@ -13,6 +14,7 @@ export default function DashboardAdmin() {
   const [loading,     setLoading]     = useState(true)
   const [ticketSel,   setTicketSel]   = useState(null)
   const [ticketNotificacion, setTicketNotificacion] = useState(null)
+  const [ticketChat, setTicketChat] = useState(null)
 
   // silencioso = actualización automática: no muestra el spinner de carga
   const cargar = (silencioso) => {
@@ -109,7 +111,10 @@ export default function DashboardAdmin() {
             <h1 className="page-title">Dashboard Administrador</h1>
             <p className="page-subtitle">Visión ejecutiva del negocio</p>
           </div>
-          <CampanaNotificaciones onAbrirTicket={(t) => setTicketNotificacion(t)} />
+          <CampanaNotificaciones
+            onAbrirTicket={setTicketNotificacion}
+            onAbrirChat={setTicketChat}
+          />
         </div>
 
         {/* Tabs */}
@@ -269,6 +274,7 @@ export default function DashboardAdmin() {
           onUpdated={fetchAll}
         />
       )}
+<<<<<<< HEAD
 
       {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
@@ -284,6 +290,15 @@ export default function DashboardAdmin() {
           </div>
         </div>
       </div>
+=======
+      {ticketChat && (
+        <ChatTicketModal
+          ticket={ticketChat}
+          onClose={() => setTicketChat(null)}
+          onRead={fetchAll}
+        />
+      )}
+>>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }

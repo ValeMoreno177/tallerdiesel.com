@@ -1,6 +1,5 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import api from '../api/client'
-import EvidenciaBurbuja from './EvidenciaBurbuja'
 import { useAuth } from '../context/AuthContext'
 import MapaReasignarTecnicoModal from './MapaReasignarTecnicoModal'
 import ResumenCalificacion from './ResumenCalificacion'
@@ -9,8 +8,6 @@ import useAutoRefresh from '../hooks/useAutoRefresh'
 
 export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLectura = false }) {
   const { user } = useAuth()
-  const [comentario,   setComentario]   = useState('')
-  const [enviando,     setEnviando]     = useState(false)
   const [localTicket,  setLocalTicket]  = useState(ticket)
   const [permisoCargando, setPermisoCargando] = useState(false)
   const [asignandoTecnico, setAsignandoTecnico] = useState(false)
@@ -32,16 +29,10 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const totalManoObra    = num(localTicket.mo_costo)  + num(localTicket.mo_ganancia)
   const tienePermisoEdicion = localTicket.puede_editar_coordinador
 
-  // Los comentarios NO se bloquean aunque el servicio esté finalizado (coordinador, cliente y admin)
-  // (soloLectura solo limita editar/asignar, NO comentar)
-  const puedeComentar = true
-  const bloqueado = !puedeComentar
-
   // Solo el coordinador ASIGNADO edita el ticket (o cualquier coordinador si aún no tiene coordinador: lo toma
   // al atenderlo). Para el resto de Admin/Coordinadores es solo lectura. El servidor lo manda en `puede_editar`.
   const esStaff = user?.rol === 'admin' || user?.rol === 'coordinador'
   const puedeEditarTicket = esStaff && localTicket.puede_editar === true
-  const soloLecturaStaff = esStaff && !puedeEditarTicket
 
   // El coordinador asignado puede asignar/cambiar el técnico de un ticket que no esté finalizado.
   // El Cliente también puede, pero solo en su propio ticket de tipo "directo con técnico".
@@ -65,74 +56,6 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
     } catch (e) {
       alert('No se pudo tomar el servicio. ' + (e?.response?.data?.error || ''))
     } finally { setTomandoServicio(false) }
-  }
-
-  const ROL_COLOR = { cliente: '#0DE255', coordinador: '#2563eb', admin: '#111827', tecnico: '#f59e0b' }
-  const ROL_LABEL = { cliente: 'Cliente', coordinador: 'Coordinador', admin: 'Admin', tecnico: 'Técnico' }
-
-  const enviarComentario = async () => {
-    if (!comentario.trim()) return
-    setEnviando(true)
-    try {
-      const { data } = await api.post(`/tickets/${localTicket.id}/agregar_comentario/`, { texto: comentario })
-      setLocalTicket(t => ({ ...t, comentarios: [...(t.comentarios || []), data] }))
-      setComentario('')
-      if (onUpdated) onUpdated()
-    } catch { } finally { setEnviando(false) }
-  }
-
-  // ── Evidencias del servicio (suben Coordinador/Admin; todos las pueden ver) ──
-  const fileRef = useRef(null)
-  const [subiendoEv, setSubiendoEv] = useState(false)
-  const [errorEv, setErrorEv] = useState('')
-  const puedeSubirEvidencia = user?.rol === 'coordinador' || user?.rol === 'admin'
-  const evidencias = localTicket.evidencias || []
-  // Comentario que corresponde a una evidencia subida (los antiguos se buscan por nombre de archivo)
-  const evidenciaDe = c => {
-    if (c.es_cambio_estatus) return null
-    if (c.evidencia) return evidencias.find(e => e.id === c.evidencia) || null
-    const m = String(c.texto).match(/^📎 Evidencia del servicio subida: (.+)$/)
-    return m ? ([...evidencias].reverse().find(e => e.nombre_original === m[1]) || null) : null
-  }
-
-  const subirEvidencias = async (e) => {
-    const files = Array.from(e.target.files || [])
-    e.target.value = ''
-    if (files.length === 0) return
-    setSubiendoEv(true); setErrorEv('')
-    try {
-      for (const f of files) {
-        const fd = new FormData()
-        fd.append('archivo', f)
-        const { data } = await api.post(`/tickets/${localTicket.id}/subir_evidencia/`, fd)
-        setLocalTicket(data)
-      }
-      onUpdated && onUpdated()
-    } catch (err) {
-      const r = err?.response
-      const detalle = r?.data?.error || r?.data?.detail || (r?.data?.archivo && String(r.data.archivo))
-      setErrorEv(detalle
-        ? `No se pudo subir la evidencia: ${detalle}`
-        : `No se pudo subir la evidencia (${r ? 'error ' + r.status : 'sin conexión con el servidor'}).`)
-    } finally { setSubiendoEv(false) }
-  }
-
-  // ── Editar mis propios comentarios ──
-  const [editandoId, setEditandoId] = useState(null)
-  const [textoEdit, setTextoEdit] = useState('')
-  const [guardandoEdit, setGuardandoEdit] = useState(false)
-  const esMio = c => c.autor === user?.id && !c.es_cambio_estatus && !String(c.texto).startsWith('📎')
-
-  const guardarEdicion = async () => {
-    if (!textoEdit.trim()) return
-    setGuardandoEdit(true)
-    try {
-      const { data } = await api.post(`/tickets/${localTicket.id}/editar_comentario/`, { comentario_id: editandoId, texto: textoEdit })
-      setLocalTicket(t => ({ ...t, comentarios: (t.comentarios || []).map(c => c.id === data.id ? data : c) }))
-      setEditandoId(null)
-      onUpdated && onUpdated()
-    } catch (e) { alert(e?.response?.data?.error || 'No se pudo editar el comentario.') }
-    finally { setGuardandoEdit(false) }
   }
 
   const [finalizando, setFinalizando] = useState(false)
@@ -169,12 +92,6 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
       setLocalTicket(t => ({ ...t, puede_editar_coordinador: data.puede_editar_coordinador }))
       if (onUpdated) onUpdated()
     } catch { } finally { setPermisoCargando(false) }
-  }
-
-  const formatFecha = (f) => {
-    if (!f) return '—'
-    const d = new Date(f)
-    return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
   return (
@@ -325,93 +242,6 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
             </div>
           )}
 
-          {/* Historial / Comentarios */}
-          <div>
-            <h4 style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem', color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase' }}>
-              Historial y comentarios
-            </h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem', maxHeight: 200, overflowY: 'auto' }}>
-              {(!localTicket.comentarios || localTicket.comentarios.length === 0) && (
-                <div style={{ color: '#9ca3af', fontSize: '0.85rem', textAlign: 'center', padding: '1rem' }}>Sin comentarios aún</div>
-              )}
-              {localTicket.comentarios?.map(c => (
-                <div key={c.id} style={{ background: c.es_cambio_estatus ? '#fffbeb' : '#f9fafb', borderRadius: 8, padding: '0.625rem 0.875rem', border: `1px solid ${c.es_cambio_estatus ? '#fef3c7' : '#f3f4f6'}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: c.es_cambio_estatus ? '#92400e' : '#374151', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {!c.es_cambio_estatus && c.autor_rol && (
-                        <span title={ROL_LABEL[c.autor_rol] || c.autor_rol}
-                          style={{ width: 8, height: 8, borderRadius: '50%', background: ROL_COLOR[c.autor_rol] || '#9ca3af', flexShrink: 0, display: 'inline-block' }} />
-                      )}
-                      {c.es_cambio_estatus ? '🔄' : '💬'} {c.autor_nombre}
-                    </span>
-                    <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{formatFecha(c.fecha)}</span>
-                  </div>
-                  {evidenciaDe(c) ? (
-                    <EvidenciaBurbuja ticketId={localTicket.id} evidencia={evidenciaDe(c)} />
-                  ) : editandoId === c.id ? (
-                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                      <input className="form-input" value={textoEdit} autoFocus style={{ flex: 1 }}
-                        onChange={e => setTextoEdit(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') guardarEdicion(); if (e.key === 'Escape') setEditandoId(null) }} />
-                      <button className="btn btn-primary btn-sm" onClick={guardarEdicion} disabled={guardandoEdit || !textoEdit.trim()}>Guardar</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => setEditandoId(null)}>Cancelar</button>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '0.85rem', color: '#374151' }}>
-                      {c.texto}
-                      {c.editado && <span style={{ fontSize: '0.7rem', color: '#9ca3af', marginLeft: 6 }}>(editado)</span>}
-                      {esMio(c) && (
-                        <button title="Editar mi comentario" onClick={() => { setEditandoId(c.id); setTextoEdit(c.texto) }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', marginLeft: 6, color: '#6b7280' }}>✏️</button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {!bloqueado && (
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <input className="form-input" placeholder="Escribe un comentario..."
-                  value={comentario} onChange={e => setComentario(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && enviarComentario()}
-                  style={{ flex: 1 }} />
-                {puedeSubirEvidencia && (
-                  <>
-                    <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf"
-                      style={{ display: 'none' }} onChange={subirEvidencias} />
-                    <button className="btn btn-ghost" type="button" title="Subir evidencia del servicio (si el cliente la solicita)"
-                      onClick={() => fileRef.current?.click()} disabled={subiendoEv}>
-                      {subiendoEv ? 'Subiendo...' : '📎 Evidencia'}
-                    </button>
-                  </>
-                )}
-                <button className="btn btn-primary" onClick={enviarComentario} disabled={enviando || !comentario.trim()}>
-                  {enviando ? '...' : 'Enviar'}
-                </button>
-              </div>
-            )}
-            {puedeSubirEvidencia && (
-              <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 6 }}>
-                📎 Adjunta la evidencia del servicio si el cliente la pide (JPG, PNG, WEBP o PDF · máx. 10 MB).
-              </div>
-            )}
-            {errorEv && (
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 8, padding: '6px 10px', fontSize: '0.8rem', marginTop: 6 }}>{errorEv}</div>
-            )}
-            {soloLecturaStaff && (
-              <div role="note" style={{ background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', fontSize: '0.8rem', color: '#374151', marginTop: 6 }}>
-                👁 Solo lectura — {localTicket.coordinador_nombre
-                  ? `lo atiende ${localTicket.coordinador_nombre}; solo el coordinador asignado puede editarlo.`
-                  : 'solo un coordinador puede atenderlo.'}
-              </div>
-            )}
-            {esTerminado && tienePermisoEdicion && user?.rol === 'coordinador' && (
-              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '8px 12px', fontSize: '0.8rem', color: '#065f46', marginTop: 6 }}>
-                ✏️ El Administrador te ha dado permiso de editar este ticket cerrado.
-              </div>
-            )}
-          </div>
         </div>
       </div>
 

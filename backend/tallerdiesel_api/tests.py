@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 from django.utils import timezone
 
-from .models import Notificacion, Opinion, Tecnico, Ticket
+from .models import ComentarioTicket, Notificacion, Opinion, Tecnico, Ticket
 
 User = get_user_model()
 
@@ -822,6 +822,61 @@ class NotificacionesTiempoRealTests(BaseTickets):
         Notificacion.objects.bulk_create([Notificacion(destinatario=self.carlo, titulo=f'n{i}', mensaje='m') for i in range(230)])
         lista = self._con(self.carlo).get('/api/notificaciones/').data
         self.assertEqual(len(lista), 200)
+
+    def test_chat_cuenta_mensajes_no_leidos_por_ticket_y_los_marca_solo_para_el_usuario(self):
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        otro_ticket = self._solicitud(cliente=self.cli2, coordinador=self.carlo, estatus='proceso')
+        ComentarioTicket.objects.create(
+            ticket=ticket, autor=self.carlo, autor_nombre=self.carlo.nombre_completo,
+            texto='¿En qué puedo ayudarte?',
+        )
+        mensajes = self._con(self.cli).get(f'/api/tickets/{ticket.id}/mensajes/')
+        self.assertEqual(mensajes.status_code, 200, mensajes.data)
+        self.assertEqual(mensajes.data['comentarios'][0]['texto'], '¿En qué puedo ayudarte?')
+
+        Notificacion.objects.create(
+            destinatario=self.cli, titulo='Respuesta', mensaje='Uno',
+            tipo='comentario', referencia_id=ticket.id,
+        )
+        Notificacion.objects.create(
+            destinatario=self.cli, titulo='Respuesta', mensaje='Dos',
+            tipo='comentario', referencia_id=ticket.id,
+        )
+        Notificacion.objects.create(
+            destinatario=self.cli2, titulo='Respuesta', mensaje='Otro cliente',
+            tipo='comentario', referencia_id=otro_ticket.id,
+        )
+        aviso_coordinador = Notificacion.objects.create(
+            destinatario=self.carlo, titulo='Mensaje cliente', mensaje='Para el coordinador',
+            tipo='comentario', referencia_id=ticket.id,
+        )
+
+        dashboard_cliente = self._con(self.cli).get('/api/tickets/dashboard_cliente/').data
+        self.assertEqual(
+            next(t for t in dashboard_cliente['recientes'] if t['id'] == ticket.id)['mensajes_no_leidos'],
+            2,
+        )
+        dashboard_coordinador = self._con(self.carlo).get('/api/tickets/dashboard_coordinador/').data
+        self.assertEqual(
+            next(t for t in dashboard_coordinador['tickets'] if t['id'] == ticket.id)['mensajes_no_leidos'],
+            1,
+        )
+
+        respuesta = self._con(self.cli).post(f'/api/tickets/{ticket.id}/marcar-mensajes-leidos/')
+
+        self.assertEqual(respuesta.status_code, 200, respuesta.data)
+        self.assertEqual(respuesta.data['marcados'], 2)
+        self.assertFalse(Notificacion.objects.filter(
+            destinatario=self.cli, referencia_id=ticket.id, tipo='comentario', leida=False,
+        ).exists())
+        aviso_coordinador.refresh_from_db()
+        self.assertFalse(aviso_coordinador.leida)
+        restante_response = self._con(self.carlo).get('/api/tickets/').data
+        restante = restante_response.get('results', restante_response)
+        self.assertEqual(
+            next(t for t in restante if t['id'] == ticket.id)['mensajes_no_leidos'],
+            1,
+        )
 
     def test_la_revision_de_sla_corre_a_lo_mucho_una_vez_por_segundo(self):
         from unittest import mock

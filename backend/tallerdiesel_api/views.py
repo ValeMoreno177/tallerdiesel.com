@@ -12,7 +12,8 @@ from django.utils import timezone
 from django.http import HttpResponse, FileResponse, Http404
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
-from django.db.models import Avg, Count, Q, F
+from django.db.models import Avg, Count, Q, F, OuterRef, Subquery, IntegerField, Value
+from django.db.models.functions import Coalesce
 from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
@@ -31,6 +32,22 @@ from .serializers import (
     SolicitudServicioSerializer, NotificacionSerializer, ComentarioTicketSerializer,
     ConfiguracionEmpresaSerializer, UnidadFlotillaSerializer, EvidenciaTicketSerializer
 )
+
+
+def _con_mensajes_no_leidos(queryset, usuario):
+    pendientes = Notificacion.objects.filter(
+        destinatario=usuario,
+        referencia_id=OuterRef('pk'),
+        tipo='comentario',
+        leida=False,
+    ).values('referencia_id').annotate(total=Count('id')).values('total')[:1]
+    return queryset.annotate(
+        mensajes_no_leidos=Coalesce(
+            Subquery(pendientes, output_field=IntegerField()),
+            Value(0),
+            output_field=IntegerField(),
+        )
+    )
 
 User = get_user_model()
 
@@ -275,6 +292,8 @@ class PuedeEditarTicket(BasePermission):
         # Cliente: solo su propio ticket
         if view.action in ('agregar_comentario', 'editar_comentario'):
             return True  # los comentarios nunca se bloquean, ni con el servicio finalizado
+        if view.action == 'marcar_mensajes_leidos':
+            return True
         if view.action in ('update', 'partial_update', 'asignar_tecnico', 'responder_finalizacion'):
             return obj.estatus != 'terminado'
         if view.action == 'calificar':
@@ -702,7 +721,10 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from django.db.models import Q
-        qs = super().get_queryset().prefetch_related('opinion')
+        qs = _con_mensajes_no_leidos(
+            super().get_queryset().prefetch_related('opinion'),
+            self.request.user,
+        )
         # Por default no se muestran los tickets en la papelera, salvo que se pida explícitamente
         # con ?eliminados=1 (usado por la acción "papelera" de abajo).
         if self.request.query_params.get('eliminados') == '1':
@@ -1084,6 +1106,27 @@ class TicketViewSet(viewsets.ModelViewSet):
         self._notificar_comentario(ticket, request.user, texto)
         return Response(ComentarioTicketSerializer(comentario).data, status=201)
 
+    @action(detail=True, methods=['post'], url_path='marcar-mensajes-leidos')
+    def marcar_mensajes_leidos(self, request, pk=None):
+        ticket = self.get_object()
+        actualizados = Notificacion.objects.filter(
+            destinatario=request.user,
+            referencia_id=ticket.id,
+            tipo='comentario',
+            leida=False,
+        ).update(leida=True)
+        return Response({'marcados': actualizados})
+
+    @action(detail=True, methods=['get'])
+    def mensajes(self, request, pk=None):
+        ticket = self.get_object()
+        comentarios = ticket.comentarios.select_related('autor', 'evidencia')
+        return Response({
+            'ticket_id': ticket.id,
+            'etiqueta': ticket.etiqueta,
+            'comentarios': ComentarioTicketSerializer(comentarios, many=True).data,
+        })
+
     @action(detail=True, methods=['post'])
     def editar_comentario(self, request, pk=None):
         """El autor edita su propio comentario (también con el servicio finalizado)."""
@@ -1330,7 +1373,7 @@ class TicketViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def dashboard_cliente(self, request):
         user = request.user
-        tickets = Ticket.objects.filter(cliente=user)
+        tickets = _con_mensajes_no_leidos(Ticket.objects.filter(cliente=user), user)
         return Response({
             'en_curso': tickets.filter(estatus__in=['pendiente', 'atendido', 'proceso']).count(),
             'terminados': tickets.filter(estatus='terminado').count(),
@@ -1345,7 +1388,10 @@ class TicketViewSet(viewsets.ModelViewSet):
         # Mismos tickets que ve en su bitácora: los suyos + los recién solicitados que aún no
         # tienen coordinador (si no, un servicio nuevo no se vería hasta que alguien lo tome).
         # Los eliminados (papelera) no cuentan.
-        tickets = Ticket.objects.filter(Q(coordinador=user) | Q(coordinador__isnull=True), eliminado=False)
+        tickets = _con_mensajes_no_leidos(
+            Ticket.objects.filter(Q(coordinador=user) | Q(coordinador__isnull=True), eliminado=False),
+            user,
+        )
         return Response({
             'en_proceso': tickets.filter(estatus='proceso').count(),
             'pendientes': tickets.filter(estatus__in=['pendiente', 'atendido']).count(),

@@ -186,6 +186,7 @@ class TicketSerializer(serializers.ModelSerializer):
     comision = serializers.ReadOnlyField()
     comentarios = ComentarioTicketSerializer(many=True, read_only=True)
     evidencias  = EvidenciaTicketSerializer(many=True, read_only=True)
+    mensajes_no_leidos = serializers.SerializerMethodField()
     # Calificación del cliente (estrellas al técnico y al servicio)
     calificado          = serializers.SerializerMethodField()
     # ¿Quien consulta puede editar este ticket? (coordinador asignado; otros roles, solo lectura)
@@ -210,6 +211,9 @@ class TicketSerializer(serializers.ModelSerializer):
 
     def get_tecnico_nombre(self, obj):
         return obj.tecnico.nombre if obj.tecnico else None
+
+    def get_mensajes_no_leidos(self, obj):
+        return getattr(obj, 'mensajes_no_leidos', 0)
 
     def _opinion(self, obj):
         # Se usa .all() (no .first()) para aprovechar el prefetch_related('opinion') del viewset.

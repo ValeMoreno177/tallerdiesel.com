@@ -3,9 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import Toast from '../components/Toast'
 import api from '../api/client'
-import { useAuth } from '../context/AuthContext'
-import EvidenciaBurbuja from '../components/EvidenciaBurbuja'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
+import ChatTicketModal, { BotonChat } from '../components/ChatTicketModal'
 import ResumenCalificacion from '../components/ResumenCalificacion'
 import { pedirCalificacion } from '../components/CalificacionGlobal'
 import useAutoRefresh from '../hooks/useAutoRefresh'
@@ -41,35 +40,13 @@ function PasosTicket({ estatus }) {
   )
 }
 
-function TicketCard({ t, onUpdated }) {
-  const { user } = useAuth()
+function TicketCard({ t, onUpdated, onOpenChat }) {
   const finalizado = t.estatus === 'terminado'
   const [editando, setEditando] = useState(false)
   const [form, setForm] = useState({ tipo_unidad: t.tipo_unidad || '', unidad: t.unidad || '', reparacion: t.reparacion || '' })
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
-  const [comentario, setComentario] = useState('')
-  const [enviandoComentario, setEnviandoComentario] = useState(false)
   const [respondiendo, setRespondiendo] = useState(false)
-  const [editandoId, setEditandoId] = useState(null)
-  const [textoEdit, setTextoEdit] = useState('')
-  const esMio = c => c.autor === user?.id && !c.es_cambio_estatus
-  const evidenciaDe = c => {
-    if (c.es_cambio_estatus) return null
-    const evs = t.evidencias || []
-    if (c.evidencia) return evs.find(e => e.id === c.evidencia) || null
-    const m = String(c.texto).match(/^📎 Evidencia del servicio subida: (.+)$/)
-    return m ? ([...evs].reverse().find(e => e.nombre_original === m[1]) || null) : null
-  }
-
-  const guardarEdicion = async () => {
-    if (!textoEdit.trim()) return
-    try {
-      await api.post(`/tickets/${t.id}/editar_comentario/`, { comentario_id: editandoId, texto: textoEdit })
-      setEditandoId(null)
-      onUpdated()
-    } catch (e) { setError(e.response?.data?.error || 'No se pudo editar el comentario.') }
-  }
 
   const solicitudPendiente = !!t.finalizacion_solicitada && !finalizado
 
@@ -82,12 +59,6 @@ function TicketCard({ t, onUpdated }) {
     finally { setRespondiendo(false) }
   }
 
-  const formatFecha = f => {
-    if (!f) return '—'
-    const d = new Date(f)
-    return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-  }
-
   const guardar = async () => {
     setGuardando(true); setError('')
     try {
@@ -97,17 +68,6 @@ function TicketCard({ t, onUpdated }) {
     } catch (e) {
       setError(e.response?.data?.error || 'No se pudo guardar el cambio.')
     } finally { setGuardando(false) }
-  }
-
-  const enviarComentario = async () => {
-    if (!comentario.trim()) return
-    setEnviandoComentario(true)
-    try {
-      await api.post(`/tickets/${t.id}/agregar_comentario/`, { texto: comentario.trim() })
-      setComentario('')
-      onUpdated()
-    } catch { /* silencioso */ }
-    finally { setEnviandoComentario(false) }
   }
 
   return (
@@ -193,43 +153,8 @@ function TicketCard({ t, onUpdated }) {
         </div>
       )}
 
-      {t.comentarios?.length > 0 && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {t.comentarios.map(c => (
-            <div key={c.id} style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-              <strong style={{ color: '#374151' }}>{formatFecha(c.fecha)}</strong> —{' '}
-              {evidenciaDe(c) ? (
-                <div style={{ marginTop: 4 }}><EvidenciaBurbuja ticketId={t.id} evidencia={evidenciaDe(c)} /></div>
-              ) : editandoId === c.id ? (
-                <span style={{ display: 'inline-flex', gap: 6, width: '80%', verticalAlign: 'middle' }}>
-                  <input className="form-input" value={textoEdit} autoFocus style={{ flex: 1 }}
-                    onChange={e => setTextoEdit(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') guardarEdicion(); if (e.key === 'Escape') setEditandoId(null) }} />
-                  <button className="btn btn-primary btn-sm" onClick={guardarEdicion} disabled={!textoEdit.trim()}>Guardar</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setEditandoId(null)}>Cancelar</button>
-                </span>
-              ) : (
-                <>
-                  {c.texto}
-                  {c.editado && <span style={{ fontSize: '0.7rem', color: '#9ca3af', marginLeft: 6 }}>(editado)</span>}
-                  {esMio(c) && (
-                    <button title="Editar mi comentario" onClick={() => { setEditandoId(c.id); setTextoEdit(c.texto) }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', marginLeft: 6, color: '#6b7280' }}>✏️</button>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
       <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f3f4f6', display: 'flex', gap: 8 }}>
-        <input className="form-input" placeholder="Escribe un comentario para tu coordinador..."
-          value={comentario} onChange={e => setComentario(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && enviarComentario()} style={{ flex: 1 }} />
-        <button className="btn btn-primary btn-sm" disabled={enviandoComentario || !comentario.trim()} onClick={enviarComentario}>
-          {enviandoComentario ? '...' : '📨 Enviar'}
-        </button>
+        <BotonChat ticket={t} onClick={() => onOpenChat(t)} />
       </div>
     </div>
   )
@@ -239,6 +164,7 @@ export default function ClienteBitacoraPage() {
   const [tickets, setTickets] = useState([])
   const [loading, setLoading] = useState(true)
   const [toastError, setToastError] = useState('')
+  const [ticketChat, setTicketChat] = useState(null)
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -314,7 +240,7 @@ export default function ClienteBitacoraPage() {
             <h1 className="page-title">🧑‍💼 Bitácora</h1>
             <p className="page-subtitle">Historial de todos tus servicios solicitados</p>
           </div>
-          <CampanaNotificaciones />
+          <CampanaNotificaciones onAbrirChat={setTicketChat} />
         </div>
 
         {loading ? (
@@ -326,11 +252,12 @@ export default function ClienteBitacoraPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             {tickets.map(t => (
-              <TicketCard key={t.id} t={t} onUpdated={fetchTickets} />
+              <TicketCard key={t.id} t={t} onUpdated={fetchTickets} onOpenChat={setTicketChat} />
             ))}
           </div>
         )}
       </main>
+<<<<<<< HEAD
 
       {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
@@ -346,6 +273,15 @@ export default function ClienteBitacoraPage() {
           </div>
         </div>
       </div>
+=======
+      {ticketChat && (
+        <ChatTicketModal
+          ticket={ticketChat}
+          onClose={() => setTicketChat(null)}
+          onRead={fetchTickets}
+        />
+      )}
+>>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }

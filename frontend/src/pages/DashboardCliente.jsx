@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import ModalDetalleTicket from '../components/ModalDetalleTicket'
+import ChatTicketModal, { BotonChat } from '../components/ChatTicketModal'
 import api from '../api/client'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import { useAuth } from '../context/AuthContext'
@@ -28,6 +29,7 @@ export default function DashboardCliente() {
   const [loading,            setLoading]            = useState(true)
   const [ticketSeleccionado, setTicketSeleccionado] = useState(null)
   const [ticketNotificacion, setTicketNotificacion] = useState(null)
+  const [ticketChat, setTicketChat] = useState(null)
   const [tecnicoElegido,     setTecnicoElegido]     = useState(() => {
     try { return JSON.parse(localStorage.getItem('td_tecnico_elegido') || 'null') } catch { return null }
   })
@@ -80,13 +82,13 @@ export default function DashboardCliente() {
             <thead>
               <tr>
                 <th>Ticket</th><th>Unidad</th><th>Lugar</th><th>Fecha</th><th>Estatus</th>
-                <th>Atendido por</th>
+                <th>Chat</th><th>Atendido por</th>
                 <th>Total</th><th>Ver</th>
               </tr>
             </thead>
             <tbody>
               {!tickets.length && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#9ca3af', padding: '1.5rem' }}>
+                <tr><td colSpan={9} style={{ textAlign: 'center', color: '#9ca3af', padding: '1.5rem' }}>
                   No hay servicios aún
                 </td></tr>
               )}
@@ -104,6 +106,7 @@ export default function DashboardCliente() {
                       )}
                     </div>
                   </td>
+                  <td><BotonChat ticket={t} onClick={() => setTicketChat(t)} /></td>
                   <td>
                     {t.tipo_solicitud === 'tecnico'
                       ? (t.tecnico_nombre || <span style={{ color: '#9ca3af' }}>Técnico sin asignar</span>)
@@ -175,7 +178,10 @@ export default function DashboardCliente() {
             <h1 className="page-title">Hola, {user?.nombre || user?.username} 👋</h1>
             <p className="page-subtitle">{user?.empresa} — {user?.puesto || 'Cliente'}</p>
           </div>
-          <CampanaNotificaciones onAbrirTicket={(t) => setTicketNotificacion(t)} />
+          <CampanaNotificaciones
+            onAbrirTicket={setTicketNotificacion}
+            onAbrirChat={setTicketChat}
+          />
         </div>
 
         <div className="grid-stats" style={{ marginBottom: '1.5rem' }}>
@@ -247,6 +253,7 @@ export default function DashboardCliente() {
           onUpdated={fetchData}
         />
       )}
+<<<<<<< HEAD
 
       {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
@@ -262,6 +269,15 @@ export default function DashboardCliente() {
           </div>
         </div>
       </div>
+=======
+      {ticketChat && (
+        <ChatTicketModal
+          ticket={ticketChat}
+          onClose={() => setTicketChat(null)}
+          onRead={fetchData}
+        />
+      )}
+>>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }

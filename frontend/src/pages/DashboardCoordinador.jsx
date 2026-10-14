@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Sidebar from '../components/Sidebar'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import ModalDetalleTicket from '../components/ModalDetalleTicket'
+import ChatTicketModal, { BotonChat } from '../components/ChatTicketModal'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import useAutoRefresh from '../hooks/useAutoRefresh'
@@ -14,6 +15,7 @@ export default function DashboardCoordinador() {
   const [tabActivo,   setTabActivo]   = useState('tickets')
   const [ticketSel,         setTicketSel]         = useState(null)
   const [ticketNotificacion, setTicketNotificacion] = useState(null)
+  const [ticketChat, setTicketChat] = useState(null)
 
   // silencioso = actualización automática: no muestra el spinner de carga
   const cargar = (silencioso) => {
@@ -107,7 +109,10 @@ export default function DashboardCoordinador() {
             <h1 className="page-title">Dashboard Coordinador</h1>
             <p className="page-subtitle">Bienvenido, {user?.nombre_completo || user?.username}</p>
           </div>
-          <CampanaNotificaciones onAbrirTicket={(t) => setTicketNotificacion(t)} />
+          <CampanaNotificaciones
+            onAbrirTicket={setTicketNotificacion}
+            onAbrirChat={setTicketChat}
+          />
         </div>
 
         <div className="grid-stats">
@@ -142,15 +147,16 @@ export default function DashboardCoordinador() {
                 </div>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Ticket</th><th>Empresa</th><th>Fecha</th><th>Estatus</th><th>Unidad</th><th>Lugar</th><th>Tipo</th><th>Técnico / Coord.</th><th>Total</th><th>IVA</th><th>Factura</th><th>Ver</th></tr></thead>
+                    <thead><tr><th>Ticket</th><th>Empresa</th><th>Fecha</th><th>Estatus</th><th>Chat</th><th>Unidad</th><th>Lugar</th><th>Tipo</th><th>Técnico / Coord.</th><th>Total</th><th>IVA</th><th>Factura</th><th>Ver</th></tr></thead>
                     <tbody>
-                      {!data?.tickets?.length && <tr><td colSpan={11} style={{ textAlign: 'center', color: '#9ca3af', padding: '2rem' }}>Sin tickets</td></tr>}
+                      {!data?.tickets?.length && <tr><td colSpan={13} style={{ textAlign: 'center', color: '#9ca3af', padding: '2rem' }}>Sin tickets</td></tr>}
                       {data?.tickets?.map(t => (
                         <tr key={t.id}>
                           <td className="td-link">{t.etiqueta || t.ticket_id}</td>
                           <td>{t.empresa}</td>
                           <td>{t.fecha}</td>
                           <td><span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span></td>
+                          <td><BotonChat ticket={t} onClick={() => setTicketChat(t)} /></td>
                           <td>{t.unidad}</td>
                           <td>{t.lugar}</td>
                           <td><span style={{fontSize:'0.7rem',background:t.tipo_solicitud==='tecnico'?'#eff6ff':'#f0fdf4',color:t.tipo_solicitud==='tecnico'?'#1e40af':'#065f46',padding:'1px 6px',borderRadius:10,fontWeight:600}}>{t.tipo_solicitud==='tecnico'?'👷':'🧑‍💼'}</span></td>
@@ -232,6 +238,7 @@ export default function DashboardCoordinador() {
           onUpdated={fetchData}
         />
       )}
+<<<<<<< HEAD
 
       {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
@@ -247,6 +254,15 @@ export default function DashboardCoordinador() {
           </div>
         </div>
       </div>
+=======
+      {ticketChat && (
+        <ChatTicketModal
+          ticket={ticketChat}
+          onClose={() => setTicketChat(null)}
+          onRead={fetchData}
+        />
+      )}
+>>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }
