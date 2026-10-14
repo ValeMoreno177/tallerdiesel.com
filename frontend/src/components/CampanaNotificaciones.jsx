@@ -5,7 +5,7 @@ import { activarSonido, useNotificaciones } from '../context/NotificacionesConte
 import { pedirCalificacion } from './CalificacionGlobal'
 import api from '../api/client'
 
-// Las notificaciones se consultan cada 2 s desde NotificacionesProvider (una sola vez para toda
+// Las notificaciones se consultan cada segundo desde NotificacionesProvider (una sola vez para toda
 // la app, con sonido y aviso flotante). Esta campana solo las muestra.
 export default function CampanaNotificaciones({ onAbrirTicket }) {
   const { notifs, noLeidas, marcarLeida, marcarTodas, sonidoActivo, setSonidoActivo } = useNotificaciones()

@@ -32,14 +32,19 @@ export function activarSonido() {
     if (!AudioContextAPI) throw new Error('Este navegador no admite Web Audio API.')
     contextoAudio ||= new AudioContextAPI()
     const reanudar = contextoAudio.state === 'suspended' ? contextoAudio.resume() : Promise.resolve()
-    reanudar.then(() => {
+    return reanudar.then(() => {
       if (sonidoPendiente && contextoAudio.state === 'running') {
         sonidoPendiente = false
         tocarSonido(contextoAudio)
       }
-    }).catch(e => console.warn('No se pudo activar el sonido:', e))
+      return contextoAudio.state === 'running'
+    }).catch(e => {
+      console.warn('No se pudo activar el sonido:', e)
+      return false
+    })
   } catch (e) {
     console.warn('Audio no disponible:', e)
+    return Promise.resolve(false)
   }
 }
 
@@ -72,6 +77,18 @@ export function NotificacionesProvider({ children }) {
   const sonidoRef = useRef(true)
   const usuarioPrevio = useRef(null)   // para distinguir un cierre de sesión de la carga inicial
   useEffect(() => { sonidoRef.current = sonidoActivo }, [sonidoActivo])
+
+  useEffect(() => {
+    if (!user || !sonidoActivo) return undefined
+    const eventos = ['pointerdown', 'keydown', 'touchstart']
+    const desbloquear = () => {
+      activarSonido().then(activo => {
+        if (activo) eventos.forEach(evento => document.removeEventListener(evento, desbloquear))
+      })
+    }
+    eventos.forEach(evento => document.addEventListener(evento, desbloquear))
+    return () => eventos.forEach(evento => document.removeEventListener(evento, desbloquear))
+  }, [user?.id, sonidoActivo])
 
   // Al cambiar de usuario (login / logout) se empieza de cero
   useEffect(() => {
@@ -124,7 +141,7 @@ export function NotificacionesProvider({ children }) {
     if (hayNuevas) refrescarAhora()
   }, [user?.id])
 
-  // Cada 2 s (NOTIFICACIONES_MS), aunque la pestaña esté en segundo plano
+  // Cada segundo (NOTIFICACIONES_MS), aunque la pestaña esté en segundo plano
   useAutoRefresh(cargar, { activo: !!user, inmediato: true, intervalo: NOTIFICACIONES_MS })
 
   const marcarLeida = useCallback(async (id) => {

@@ -3,8 +3,8 @@
 // Refresco máximo de datos visibles en dashboards, bitácoras y detalle del ticket.
 export const REFRESCO_MS = 5 * 1000
 
-// Consulta frecuente para entregar mensajes y alertas con rapidez.
-export const NOTIFICACIONES_MS = 2 * 1000
+// Consulta frecuente para entregar mensajes y alertas con la menor demora posible.
+export const NOTIFICACIONES_MS = 1000
 
 // Tiempo sin actividad (mouse, teclado, toque, scroll) tras el cual se cierra la sesión.
 export const INACTIVIDAD_MS = 5 * 60 * 1000
