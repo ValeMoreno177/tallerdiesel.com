@@ -225,7 +225,7 @@ class TicketSerializer(serializers.ModelSerializer):
         return self._opinion(obj) is not None
 
     def get_puede_calificar(self, obj):
-        return bool(obj.estatus == 'terminado' and obj.cliente_id and not obj.eliminado
+        return bool(obj.estatus == 'terminado' and obj.cliente_id and obj.tecnico_id and not obj.eliminado
                     and self._opinion(obj) is None)
 
     def get_calificacion_detalle(self, obj):
@@ -234,7 +234,6 @@ class TicketSerializer(serializers.ModelSerializer):
             return None
         return {
             'calificacion_tecnico': op.calificacion,
-            'calificacion_servicio': op.calificacion_servicio,
             'comentario': op.comentario,
             'fecha': op.fecha,
         }

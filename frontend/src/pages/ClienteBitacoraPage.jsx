@@ -153,9 +153,9 @@ function TicketCard({ t, onUpdated }) {
 
       {finalizado && t.puede_calificar && (
         <div style={{ marginTop: 12, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: '0.85rem', color: '#92400e' }}>
-          ⭐ Tu servicio ya fue finalizado. ¿Nos ayudas calificando{t.tecnico_nombre ? ' al técnico y' : ''} el servicio?
+          ⭐ Tu servicio ya fue finalizado. ¿Nos ayudas calificando al técnico?
           <div style={{ marginTop: 8 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => pedirCalificacion(t.id)}>⭐ Calificar servicio</button>
+            <button className="btn btn-primary btn-sm" onClick={() => pedirCalificacion(t.id)}>⭐ Calificar técnico</button>
           </div>
         </div>
       )}

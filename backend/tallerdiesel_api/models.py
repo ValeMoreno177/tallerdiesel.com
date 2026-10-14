@@ -387,9 +387,8 @@ class Tecnico(models.Model):
 
 
 class Opinion(models.Model):
-    """Calificación de un servicio. `calificacion` son las estrellas del técnico y
-    `calificacion_servicio` las del servicio realizado (1-5). El comentario es opcional.
-    Si el ticket no tuvo técnico, solo se guarda la calificación del servicio."""
+    """Calificación del técnico asociada a un servicio. El comentario es opcional.
+    `calificacion_servicio` se conserva para compatibilidad con opiniones históricas."""
     tecnico      = models.ForeignKey(Tecnico, on_delete=models.CASCADE, related_name='opiniones',
                                      null=True, blank=True)
     ticket       = models.ForeignKey('Ticket', on_delete=models.SET_NULL, null=True, blank=True, related_name='opinion')

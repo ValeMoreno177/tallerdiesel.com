@@ -292,9 +292,9 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
           {/* Calificación: el cliente la envía al finalizar; Coordinador y Admin la pueden ver */}
           {esTerminado && user?.rol === 'cliente' && localTicket.puede_calificar && (
             <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', marginBottom: '1.25rem', fontSize: '0.85rem', color: '#92400e' }}>
-              ⭐ Tu servicio ya fue finalizado. ¿Nos ayudas calificando al técnico y al servicio?
+              ⭐ Tu servicio ya fue finalizado. ¿Nos ayudas calificando al técnico?
               <div style={{ marginTop: 8 }}>
-                <button className="btn btn-primary btn-sm" onClick={() => pedirCalificacion(localTicket.id)}>⭐ Calificar servicio</button>
+                <button className="btn btn-primary btn-sm" onClick={() => pedirCalificacion(localTicket.id)}>⭐ Calificar técnico</button>
               </div>
             </div>
           )}

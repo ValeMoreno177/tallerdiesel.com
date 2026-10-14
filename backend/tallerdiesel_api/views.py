@@ -1253,41 +1253,32 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def calificar(self, request, pk=None):
-        """El cliente califica un servicio ya finalizado: estrellas (1-5) al servicio y,
-        si hubo técnico, al técnico. El comentario es opcional."""
+        """El cliente califica de 1 a 5 al técnico de un servicio finalizado."""
         ticket = self.get_object()
         if request.user.rol != 'cliente' or ticket.cliente_id != request.user.id:
             return Response({'error': 'Solo el cliente del servicio puede calificarlo.'}, status=403)
         if ticket.estatus != 'terminado':
             return Response({'error': 'Solo puedes calificar un servicio finalizado.'}, status=400)
-
-        cal_servicio = _estrellas(request.data.get('calificacion_servicio'))
-        if cal_servicio is None:
-            return Response({'error': 'Califica el servicio con un número de estrellas entre 1 y 5.'}, status=400)
-        cal_tecnico = None
-        if ticket.tecnico_id:
-            cal_tecnico = _estrellas(request.data.get('calificacion_tecnico'))
-            if cal_tecnico is None:
-                return Response({'error': 'Califica al técnico con un número de estrellas entre 1 y 5.'}, status=400)
+        if not ticket.tecnico_id:
+            return Response({'error': 'Este servicio no tiene un técnico asignado para calificar.'}, status=400)
+        cal_tecnico = _estrellas(request.data.get('calificacion_tecnico'))
+        if cal_tecnico is None:
+            return Response({'error': 'Califica al técnico con un número de estrellas entre 1 y 5.'}, status=400)
         comentario = (request.data.get('comentario') or '').strip()[:1000]
 
         with transaction.atomic():
             ticket = Ticket.objects.select_for_update().get(pk=ticket.pk)
             if Opinion.objects.filter(ticket=ticket).exists():
                 return Response({'error': 'Ya calificaste este servicio.'}, status=400)
-            tecnico = None
-            if ticket.tecnico_id:
-                tecnico = Tecnico.objects.select_for_update().get(pk=ticket.tecnico_id)
+            tecnico = Tecnico.objects.select_for_update().get(pk=ticket.tecnico_id)
             opinion = Opinion.objects.create(
                 tecnico=tecnico,
                 ticket=ticket,
                 nombre_autor=request.user.nombre_completo[:100],
                 calificacion=cal_tecnico,
-                calificacion_servicio=cal_servicio,
                 comentario=comentario,
             )
-            if tecnico:
-                _actualizar_calificacion_tecnico(tecnico)
+            _actualizar_calificacion_tecnico(tecnico)
             # Ya calificó: el aviso de la campana deja de estar pendiente
             Notificacion.objects.filter(destinatario=request.user, tipo='calificar_servicio',
                                         referencia_id=ticket.id, leida=False).update(leida=True)
@@ -1301,6 +1292,7 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response([])
         desde = timezone.now() - timedelta(days=30)
         qs = (Ticket.objects.filter(cliente=request.user, eliminado=False, estatus='terminado',
+                                    tecnico__isnull=False,
                                     fecha_finalizacion__gte=desde, opinion__isnull=True)
               .select_related('tecnico').order_by('fecha_finalizacion'))
         return Response([{

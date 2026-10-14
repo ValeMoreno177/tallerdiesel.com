@@ -15,13 +15,12 @@ const MAX_COMENTARIO = 500
 export default function ModalCalificacion({ pendiente, onEnviado }) {
   const tieneTecnico = !!pendiente.tecnico_nombre
   const [calTecnico, setCalTecnico] = useState(0)
-  const [calServicio, setCalServicio] = useState(0)
   const [comentario, setComentario] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
   const [enviado, setEnviado] = useState(false)
 
-  const listo = calServicio > 0 && (!tieneTecnico || calTecnico > 0)
+  const listo = tieneTecnico && calTecnico > 0
 
   // Tras agradecer, se cierra sola
   useEffect(() => {
@@ -35,8 +34,7 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
     setEnviando(true); setError('')
     try {
       await api.post(`/tickets/${pendiente.id}/calificar/`, {
-        calificacion_servicio: calServicio,
-        ...(tieneTecnico ? { calificacion_tecnico: calTecnico } : {}),
+        calificacion_tecnico: calTecnico,
         comentario: comentario.trim(),
       })
       setEnviado(true)
@@ -62,7 +60,7 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
         {enviado ? (
           <div style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
             <div style={{ fontSize: '3rem' }}>✅</div>
-            <p style={{ marginTop: 8, color: '#374151' }}>Tu calificación nos ayuda a mejorar el servicio.</p>
+            <p style={{ marginTop: 8, color: '#374151' }}>Tu calificación del técnico nos ayuda a mejorar.</p>
           </div>
         ) : (
           <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -74,10 +72,6 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
                 <Estrellas valor={calTecnico} onChange={setCalTecnico} etiqueta={`Calificación del técnico ${pendiente.tecnico_nombre}`} />
               </div>
             )}
-            <div>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>🔧 Califica el servicio realizado</div>
-              <Estrellas valor={calServicio} onChange={setCalServicio} etiqueta="Calificación del servicio" />
-            </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label" htmlFor="td-cal-comentario">
                 Comentario <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>

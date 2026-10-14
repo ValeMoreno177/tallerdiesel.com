@@ -9,7 +9,7 @@ User = get_user_model()
 
 
 class CalificacionServicioTests(APITestCase):
-    """Al finalizar un servicio se pide al cliente calificar al técnico y al servicio."""
+    """Al finalizar un servicio se pide al cliente calificar al técnico."""
 
     def setUp(self):
         mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
@@ -52,23 +52,24 @@ class CalificacionServicioTests(APITestCase):
         self._finalizar_con_cliente()
         url = f'/api/tickets/{self.ticket.id}/calificar/'
         # faltan estrellas
-        self.assertEqual(self.client.post(url, {'calificacion_servicio': 5}, format='json').status_code, 400)
-        self.assertEqual(self.client.post(url, {'calificacion_servicio': 6, 'calificacion_tecnico': 4}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(url, {}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(url, {'calificacion_tecnico': 6}, format='json').status_code, 400)
         # comentario opcional
-        r = self.client.post(url, {'calificacion_servicio': 4, 'calificacion_tecnico': 2}, format='json')
+        r = self.client.post(url, {'calificacion_tecnico': 2}, format='json')
         self.assertEqual(r.status_code, 201)
-        self.assertEqual(self.client.post(url, {'calificacion_servicio': 5, 'calificacion_tecnico': 5}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(url, {'calificacion_tecnico': 5}, format='json').status_code, 400)
         self.tec.refresh_from_db()
         self.assertEqual(self.tec.calificacion, 2)
         op = Opinion.objects.get(ticket=self.ticket)
-        self.assertEqual((op.calificacion, op.calificacion_servicio, op.comentario), (2, 4, ''))
+        self.assertEqual((op.calificacion, op.calificacion_servicio, op.comentario), (2, None, ''))
         # ya no está pendiente y el aviso de la campana queda leído
         self.assertEqual(self.client.get('/api/tickets/pendientes_calificar/').data, [])
         self.assertFalse(Notificacion.objects.filter(tipo='calificar_servicio', leida=False).exists())
         d = self.client.get(f'/api/tickets/{self.ticket.id}/').data
         self.assertTrue(d['calificado'])
         self.assertFalse(d['puede_calificar'])
-        self.assertEqual(d['calificacion_detalle']['calificacion_servicio'], 4)
+        self.assertEqual(d['calificacion_detalle']['calificacion_tecnico'], 2)
+        self.assertNotIn('calificacion_servicio', d['calificacion_detalle'])
 
     def test_promedio_y_total_se_actualizan_con_cada_evaluacion(self):
         self.ticket.estatus = 'terminado'
@@ -76,7 +77,7 @@ class CalificacionServicioTests(APITestCase):
         self.client.force_authenticate(self.cliente)
         r = self.client.post(
             f'/api/tickets/{self.ticket.id}/calificar/',
-            {'calificacion_servicio': 5, 'calificacion_tecnico': 2},
+            {'calificacion_tecnico': 2},
             format='json',
         )
         self.assertEqual(r.status_code, 201, r.data)
@@ -88,7 +89,7 @@ class CalificacionServicioTests(APITestCase):
         self.client.force_authenticate(self.otro)
         r = self.client.post(
             f'/api/tickets/{segundo_ticket.id}/calificar/',
-            {'calificacion_servicio': 4, 'calificacion_tecnico': 4},
+            {'calificacion_tecnico': 4},
             format='json',
         )
         self.assertEqual(r.status_code, 201, r.data)
@@ -127,7 +128,7 @@ class CalificacionServicioTests(APITestCase):
 
     def test_no_se_califica_si_no_esta_finalizado_ni_ajeno_ni_staff(self):
         url = f'/api/tickets/{self.ticket.id}/calificar/'
-        body = {'calificacion_servicio': 5, 'calificacion_tecnico': 5}
+        body = {'calificacion_tecnico': 5}
         self.client.force_authenticate(self.cliente)
         self.assertEqual(self.client.post(url, body, format='json').status_code, 403)  # no finalizado (permiso)
         self.ticket.estatus = 'terminado'; self.ticket.save()
@@ -136,14 +137,14 @@ class CalificacionServicioTests(APITestCase):
         self.client.force_authenticate(self.coord)
         self.assertEqual(self.client.post(url, body, format='json').status_code, 403)  # staff no califica
 
-    def test_sin_tecnico_solo_califica_el_servicio(self):
+    def test_sin_tecnico_no_se_puede_calificar(self):
         self.ticket.tecnico = None; self.ticket.estatus = 'terminado'; self.ticket.save()
         self.client.force_authenticate(self.cliente)
         r = self.client.post(f'/api/tickets/{self.ticket.id}/calificar/',
-                             {'calificacion_servicio': 5, 'comentario': ' Excelente '}, format='json')
-        self.assertEqual(r.status_code, 201)
-        op = Opinion.objects.get(ticket=self.ticket)
-        self.assertIsNone(op.tecnico); self.assertEqual(op.comentario, 'Excelente')
+                             {'comentario': ' Excelente '}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(Opinion.objects.filter(ticket=self.ticket).exists())
+        self.assertFalse(self.client.get(f'/api/tickets/{self.ticket.id}/').data['puede_calificar'])
 
     def test_tickets_viejos_sin_fecha_de_cierre_no_estorban(self):
         self.ticket.estatus = 'terminado'; self.ticket.save()  # finalizado antes de esta función
