@@ -809,11 +809,13 @@ class TicketViewSet(viewsets.ModelViewSet):
                     status=403)
             kwargs['partial'] = True
 
-        # El Coordinador no cierra el servicio por su cuenta: lo solicita y el Cliente decide.
-        if (request.user.rol == 'coordinador' and ticket.cliente_id
+        # Servicio DIRECTO CON TÉCNICO: el cliente trató con el técnico, así que el Coordinador no lo
+        # cierra por su cuenta: lo solicita y el Cliente confirma. En un servicio CON COORDINADOR, el
+        # coordinador asignado sí lo finaliza directamente.
+        if (request.user.rol == 'coordinador' and ticket.cliente_id and ticket.tipo_solicitud == 'tecnico'
                 and request.data.get('estatus') == 'terminado' and ticket.estatus != 'terminado'):
             return Response(
-                {'error': 'Para finalizar el servicio usa "Solicitar finalización": el cliente debe confirmarla.'},
+                {'error': 'Este servicio fue directo con el técnico: usa "Solicitar finalización" para que el cliente la confirme.'},
                 status=403)
 
         estatus_anterior = ticket.estatus
@@ -1139,7 +1141,10 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def editar_comentario(self, request, pk=None):
-        """El autor edita su propio comentario (también con el servicio finalizado)."""
+        """El Administrador edita sus propios comentarios (también con el servicio finalizado).
+        Clientes y coordinadores ya no pueden editar los mensajes del chat una vez enviados."""
+        if request.user.rol != 'admin':
+            return Response({'error': 'Los mensajes del chat no se pueden editar una vez enviados.'}, status=403)
         ticket = self.get_object()
         texto = (request.data.get('texto') or '').strip()
         if not texto:
@@ -1289,7 +1294,8 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def solicitar_finalizacion(self, request, pk=None):
-        """Coordinador/Admin pide al cliente confirmar que el servicio ya puede finalizarse."""
+        """El coordinador asignado pide al cliente confirmar que el servicio ya puede finalizarse.
+        Solo aplica a servicios DIRECTOS CON TÉCNICO; los servicios con coordinador los cierra él mismo."""
         ticket = self.get_object()
         if request.user.rol != 'coordinador' or ticket.coordinador_id != request.user.id:
             return Response({'error': 'Solo el coordinador asignado puede solicitar la finalización.'}, status=403)
@@ -1297,6 +1303,9 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({'error': 'El servicio ya está finalizado.'}, status=400)
         if not ticket.cliente_id:
             return Response({'error': 'Este ticket no tiene cliente asignado; finalízalo desde la edición.'}, status=400)
+        if ticket.tipo_solicitud != 'tecnico':
+            return Response({'error': 'Solo los servicios directos con técnico requieren la confirmación del cliente. '
+                                      'Este servicio lo finalizas tú directamente.'}, status=400)
         ticket.finalizacion_solicitada = True
         ticket.save(update_fields=['finalizacion_solicitada'])
         ComentarioTicket.objects.create(

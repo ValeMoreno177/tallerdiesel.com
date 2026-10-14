@@ -6,7 +6,6 @@ export function getMenuItems(user) {
       { to: '/admin/bitacora', label: 'Bitácora', icon: '☰' },
       { to: '/admin/usuarios', label: 'Usuarios', icon: '👥' },
       { to: '/mapa-tecnicos', label: 'Mapa de Técnicos', icon: '🗺️' },
-      { to: '/admin/configuracion', label: 'Configuración', icon: '⚙' },
     ]
 
   if (user?.rol === 'coordinador')
@@ -17,7 +16,6 @@ export function getMenuItems(user) {
         ? [{ to: '/coordinador/usuarios', label: 'Usuarios', icon: '👥' }]
         : []),
       { to: '/mapa-tecnicos', label: 'Mapa de Técnicos', icon: '🗺️' },
-      { to: '/admin/configuracion', label: 'Configuración', icon: '⚙' },
       { to: '/coordinador/perfil', label: 'Mi perfil', icon: '👤' },
     ]
 

@@ -7,6 +7,7 @@ import ModalDetalleTicket from '../components/ModalDetalleTicket'
 import ChatTicketModal, { BotonChat } from '../components/ChatTicketModal'
 import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
+import CamionTitulo from '../components/CamionTitulo'
 
 // ─────────────────────────────────────────────
 const fmt = n => `$${parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
@@ -40,6 +41,29 @@ function calcular(f) {
   const total_mo     = moC + moG
   const total_ref    = refC + refG
   return { costo, ganancia, total, iva, neto, isr, total_f, comision, total_salida, total_mo, total_ref }
+}
+
+// Campos del formulario definidos FUERA del modal: si se definen adentro, React los vuelve a crear
+// en cada letra que se escribe y el cuadro de texto pierde el cursor.
+function Row({ label, name, form, set, type = 'text', placeholder = '', readOnly = false }) {
+  return (
+    <div className="form-group">
+      <label className="form-label">{label}</label>
+      <input className="form-input" type={type} name={name} placeholder={placeholder}
+        value={form[name] ?? ''} onChange={e => set(name, e.target.value)}
+        readOnly={readOnly} style={readOnly ? { background: '#f9fafb', color: '#6b7280' } : {}} />
+    </div>
+  )
+}
+
+function CalcRow({ label, value, highlight }) {
+  return (
+    <div className="form-group">
+      <label className="form-label" style={{ color: highlight ? '#d97706' : '#9ca3af' }}>{label}</label>
+      <input className="form-input" value={value.toFixed(2)} readOnly
+        style={{ background: '#f9fafb', color: highlight ? '#d97706' : '#6b7280', fontWeight: highlight ? 600 : 400 }} />
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────
@@ -78,6 +102,8 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
   const [error,  setError]  = useState('')
 
   const esTerminado = !esNuevo && ticket?.estatus === 'terminado' && !ticket?.puede_editar_coordinador
+  // Servicio directo con técnico y con cliente: el coordinador no lo finaliza aquí, el cliente lo confirma.
+  const requiereConfirmacionCliente = esCoord && !esNuevo && ticket?.tipo_solicitud === 'tecnico' && !!ticket?.cliente
 
   const calc = calcular(form)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -111,23 +137,6 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
       setError('Error al guardar: ' + JSON.stringify(e.response?.data))
     } finally { setSaving(false) }
   }
-
-  const Row = ({ label, name, type = 'text', placeholder = '', readOnly = false }) => (
-    <div className="form-group">
-      <label className="form-label">{label}</label>
-      <input className="form-input" type={type} name={name} placeholder={placeholder}
-        value={form[name] ?? ''} onChange={e => set(name, e.target.value)}
-        readOnly={readOnly} style={readOnly ? { background: '#f9fafb', color: '#6b7280' } : {}} />
-    </div>
-  )
-
-  const CalcRow = ({ label, value, highlight }) => (
-    <div className="form-group">
-      <label className="form-label" style={{ color: highlight ? '#d97706' : '#9ca3af' }}>{label}</label>
-      <input className="form-input" value={value.toFixed(2)} readOnly
-        style={{ background: '#f9fafb', color: highlight ? '#d97706' : '#6b7280', fontWeight: highlight ? 600 : 400 }} />
-    </div>
-  )
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -181,14 +190,21 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
               <option value="pendiente">Pendiente</option>
               <option value="atendido">En camino</option>
               <option value="proceso">Reparando</option>
-              <option value="terminado">Finalizado</option>
+              <option value="terminado" disabled={requiereConfirmacionCliente && ticket?.estatus !== 'terminado'}>
+                Finalizado{requiereConfirmacionCliente && ticket?.estatus !== 'terminado' ? ' (lo confirma el cliente)' : ''}
+              </option>
             </select>
+            {requiereConfirmacionCliente && ticket?.estatus !== 'terminado' && (
+              <span style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: 2 }}>
+                Servicio directo con técnico: usa "Solicitar finalización" en el detalle del ticket.
+              </span>
+            )}
           </div>
 
-          <Row label="Tipo de unidad" name="tipo_unidad" placeholder="Tractocamión, Caja seca..." />
-          <Row label="Unidad"   name="unidad"   placeholder="Kenworth T680" />
-          <Row label="Lugar"    name="lugar"    placeholder="Ciudad, Estado" />
-          <Row label="Operador" name="operador" placeholder="Nombre del operador" />
+          <Row form={form} set={set} label="Tipo de unidad" name="tipo_unidad" placeholder="Tractocamión, Caja seca..." />
+          <Row form={form} set={set} label="Unidad"   name="unidad"   placeholder="Kenworth T680" />
+          <Row form={form} set={set} label="Lugar"    name="lugar"    placeholder="Ciudad, Estado" />
+          <Row form={form} set={set} label="Operador" name="operador" placeholder="Nombre del operador" />
 
           {/* COORDINADOR */}
           <div className="form-group">
@@ -257,8 +273,8 @@ function ModalTicket({ ticket, coordinadoresList, empresasList, tecnicosList, on
 
           <div style={{ gridColumn: '1/-1', fontSize: '0.72rem', fontWeight: 700, letterSpacing: 2, color: '#9ca3af', marginTop: 8 }}>FACTURA</div>
 
-          <Row label="No. Factura"   name="factura"       placeholder="FAC-001" />
-          <Row label="Fecha Factura" name="fecha_factura" type="date" />
+          <Row form={form} set={set} label="No. Factura"   name="factura"       placeholder="FAC-001" />
+          <Row form={form} set={set} label="Fecha Factura" name="fecha_factura" type="date" />
           <div className="form-group">
             <label className="form-label">Estatus Factura</label>
             <select className="form-select" value={form.estatus_factura} onChange={e => set('estatus_factura', e.target.value)}>
@@ -453,46 +469,6 @@ export default function BitacoraPage({ rol }) {
 
   return (
     <div className="dashboard-layout" style={{ position: 'relative', paddingBottom: '70px' }}>
-      <style>{`
-        /* ═════════ Camión pequeño que cruza toda la pantalla ═════════ */
-        .truck-lane {
-          position: fixed; bottom: 0; left: 0; width: 100vw; height: 50px;
-          overflow: hidden; pointer-events: none; z-index: 10;
-        }
-        .truck-mover {
-          position: absolute; bottom: 4px; left: 0; width: 160px; height: 85px;
-          animation: driveAcross 14s linear infinite;
-        }
-        @keyframes driveAcross {
-          from { transform: translateX(-180px); }
-          to   { transform: translateX(100vw); }
-        }
-        .truck-scaler {
-          position: absolute; bottom: 0; left: 0; width: 160px; height: 85px;
-          transform: scale(0.42); transform-origin: bottom left;
-        }
-        .truck-animado {
-          position: absolute; bottom: 0; left: 0; width: 160px; height: 85px;
-          animation: bounceTruck 0.6s ease-in-out infinite alternate;
-        }
-        @keyframes bounceTruck {
-          0%   { transform: translateY(0); }
-          100% { transform: translateY(-3px); }
-        }
-        .truck-box { position: absolute; left: 0; top: 10px; width: 95px; height: 50px; background: #f05443; border: 2.5px solid #222; border-radius: 4px; }
-        .truck-box-stripe { position: absolute; top: 16px; left: 0; width: 95px; height: 14px; background: #6b6b6b; border-top: 2px solid #222; border-bottom: 2px solid #222; }
-        .truck-cab { position: absolute; left: 93px; top: 22px; width: 45px; height: 38px; background: #f3d4a0; border: 2.5px solid #222; border-top-left-radius: 14px; border-top-right-radius: 8px; border-bottom-right-radius: 4px; }
-        .truck-window { position: absolute; top: 6px; left: 6px; width: 22px; height: 16px; background: #fff; border: 2px solid #222; border-top-left-radius: 10px; }
-        .truck-base { position: absolute; bottom: 12px; left: 15px; width: 115px; height: 10px; background: #f05443; border: 2px solid #222; border-radius: 2px; }
-        .wheel-custom { width: 24px; height: 24px; background: #222; border: 3px solid #fff; border-radius: 50%; position: absolute; bottom: 0; box-shadow: 0 0 0 2px #222; animation: spin 0.8s linear infinite; }
-        .wheel-custom.left { left: 30px; }
-        .wheel-custom.right { left: 102px; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @media (prefers-reduced-motion: reduce) {
-          .truck-mover, .truck-animado, .wheel-custom { animation: none; }
-          .truck-mover { transform: translateX(40px); }
-        }
-      `}</style>
 
       <Sidebar />
       <main className="main-content">
@@ -504,6 +480,7 @@ export default function BitacoraPage({ rol }) {
               {filtrados.length} de {totalTickets} registros{paginaSiguiente ? ' (hay más sin cargar)' : ''}
               {rol === 'coordinador' && ' · solo tus servicios'}
             </p>
+            <CamionTitulo />
           </div>
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             <input className="form-input" placeholder="Buscar ticket, empresa, unidad..."
@@ -579,7 +556,7 @@ export default function BitacoraPage({ rol }) {
                 <thead>
                   <tr>
                     <th className="col-sticky-1">Ticket</th>
-                    <th className="col-sticky-2" style={{ position: 'relative', zIndex: filtroEmpresaAbierto ? 50 : undefined }}>
+                    <th className="col-sticky-2" style={{ zIndex: filtroEmpresaAbierto ? 50 : undefined }}>
                       <div className="th-filtro">
                         <span>Empresa</span>
                         <button
@@ -643,7 +620,19 @@ export default function BitacoraPage({ rol }) {
                   )}
                   {filtrados.map(t => (
                     <tr key={t.id} style={{ opacity: t.estatus === 'terminado' ? 0.8 : 1 }}>
-                      <td className="td-link col-sticky-1" onClick={() => openModal('detalle', t)}>{t.etiqueta || t.ticket_id}</td>
+                      <td className="col-sticky-1">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {t.puede_editar && (t.estatus !== 'terminado' || t.puede_editar_coordinador) ? (
+                            <button className="btn btn-sm btn-ghost" title="Editar" aria-label={`Editar ${t.etiqueta || t.ticket_id}`}
+                              style={{ padding: '2px 6px' }} onClick={() => openModal('editar', t)}>✏️</button>
+                          ) : (
+                            <span style={{ width: 30, display: 'inline-block' }} aria-hidden="true" />
+                          )}
+                          <span className="td-link" role="button" tabIndex={0} title="Ver detalle"
+                            onClick={() => openModal('detalle', t)}
+                            onKeyDown={e => e.key === 'Enter' && openModal('detalle', t)}>{t.etiqueta || t.ticket_id}</span>
+                        </div>
+                      </td>
                       <td className="col-sticky-2">{t.empresa}</td>
                       <td className="col-sticky-3">{t.fecha}</td>
                       <td className="col-sticky-4">
@@ -678,10 +667,6 @@ export default function BitacoraPage({ rol }) {
                       {rol === 'admin' && <td className="td-naranja">{fmt(t.comision)}</td>}
                       <td>
                         <div style={{ display: 'flex', gap: 4 }}>
-                          <button className="btn btn-sm btn-ghost" title="Ver" onClick={() => openModal('detalle', t)}>👁</button>
-                          {t.puede_editar && (t.estatus !== 'terminado' || t.puede_editar_coordinador) && (
-                            <button className="btn btn-sm btn-ghost" title="Editar" onClick={() => openModal('editar', t)}>✏️</button>
-                          )}
                           {(rol === 'admin' || (rol === 'coordinador' && t.coordinador === user?.id)) && (
                             <button className="btn btn-sm btn-ghost" title="Eliminar" style={{ color: '#dc2626' }}
                               onClick={() => openModal('eliminar', t)}>🗑️</button>
@@ -734,19 +719,6 @@ export default function BitacoraPage({ rol }) {
           onUpdated={fetchAll}
         />
       )}
-      <div className="truck-lane" aria-hidden="true">
-        <div className="truck-mover">
-          <div className="truck-scaler">
-            <div className="truck-animado">
-              <div className="truck-box"><div className="truck-box-stripe"></div></div>
-              <div className="truck-cab"><div className="truck-window"></div></div>
-              <div className="truck-base"></div>
-              <div className="wheel-custom left"></div>
-              <div className="wheel-custom right"></div>
-            </div>
-          </div>
-        </div>
-      </div>
       {ticketChat && (
         <ChatTicketModal
           ticket={ticketChat}

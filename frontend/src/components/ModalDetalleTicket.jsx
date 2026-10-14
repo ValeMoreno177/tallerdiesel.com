@@ -60,8 +60,23 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
 
   const [finalizando, setFinalizando] = useState(false)
   const solicitudPendiente = !!localTicket.finalizacion_solicitada && !esTerminado
-  const puedeSolicitarFinalizar = !soloLectura && !esTerminado && !solicitudPendiente
-    && localTicket.cliente && user?.rol === 'coordinador' && localTicket.puede_editar === true
+  // Servicio directo con técnico: el cliente trató con el técnico, así que él confirma la finalización.
+  // Servicio con coordinador: el coordinador asignado lo finaliza directamente.
+  const esDirectoConTecnico = localTicket.tipo_solicitud === 'tecnico'
+  const coordinadorPuedeCerrar = !soloLectura && !esTerminado && !solicitudPendiente
+    && user?.rol === 'coordinador' && localTicket.puede_editar === true
+  const puedeSolicitarFinalizar = coordinadorPuedeCerrar && esDirectoConTecnico && localTicket.cliente
+  const puedeFinalizarDirecto = coordinadorPuedeCerrar && !puedeSolicitarFinalizar
+
+  const finalizarDirecto = async () => {
+    if (!window.confirm(`¿Finalizar el servicio ${localTicket.etiqueta || localTicket.ticket_id}? Ya no se podrá editar.`)) return
+    setFinalizando(true)
+    try {
+      const { data } = await api.patch(`/tickets/${localTicket.id}/`, { estatus: 'terminado' })
+      setLocalTicket(prev => ({ ...prev, ...data })); onUpdated && onUpdated()
+    } catch (e) { alert(e?.response?.data?.error || 'No se pudo finalizar el servicio.') }
+    finally { setFinalizando(false) }
+  }
   const puedeResponderFinalizar = !soloLectura && solicitudPendiente
     && user?.rol === 'cliente' && localTicket.cliente === user.id
 
@@ -227,6 +242,16 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
             <div style={{ marginBottom: '1.25rem' }}>
               <button className="btn btn-sm btn-ghost" disabled={finalizando} onClick={solicitarFinalizacion}>
                 🏁 {finalizando ? 'Enviando...' : 'Solicitar finalización al cliente'}
+              </button>
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: 4 }}>
+                Servicio directo con técnico: el cliente confirma si ya puede finalizarse.
+              </div>
+            </div>
+          )}
+          {puedeFinalizarDirecto && (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <button className="btn btn-sm btn-primary" disabled={finalizando} onClick={finalizarDirecto}>
+                🏁 {finalizando ? 'Finalizando...' : 'Finalizar servicio'}
               </button>
             </div>
           )}

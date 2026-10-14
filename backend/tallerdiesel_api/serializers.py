@@ -148,6 +148,7 @@ class OperadorSerializer(serializers.ModelSerializer):
 class ComentarioTicketSerializer(serializers.ModelSerializer):
     autor_nombre = serializers.SerializerMethodField()
     autor_rol = serializers.SerializerMethodField()
+    autor_foto_version = serializers.SerializerMethodField()   # para mostrar su foto en el chat
 
     class Meta:
         model = ComentarioTicket
@@ -160,6 +161,13 @@ class ComentarioTicketSerializer(serializers.ModelSerializer):
 
     def get_autor_rol(self, obj):
         return obj.autor.rol if obj.autor else None
+
+    def get_autor_foto_version(self, obj):
+        if not obj.autor_id:
+            return None
+        from .models import FotoPerfil
+        fecha = FotoPerfil.objects.filter(usuario_id=obj.autor_id).values_list('actualizada', flat=True).first()
+        return int(fecha.timestamp()) if fecha else None
 
 
 class EvidenciaTicketSerializer(serializers.ModelSerializer):

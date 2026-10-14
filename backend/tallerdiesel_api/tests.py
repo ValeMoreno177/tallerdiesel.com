@@ -23,7 +23,7 @@ class CalificacionServicioTests(APITestCase):
                                           telefono='1', latitud=0, longitud=0)
         self.ticket = Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1',
                                             cliente=self.cliente, coordinador=self.coord,
-                                            tecnico=self.tec, estatus='proceso')
+                                            tecnico=self.tec, estatus='proceso', tipo_solicitud='tecnico')
 
     def _finalizar_con_cliente(self):
         self.client.force_authenticate(self.coord)
@@ -604,8 +604,8 @@ class SiguienteEnEsperaTests(BaseTickets):
     """2. Al finalizar un ticket, el coordinador recibe automáticamente el siguiente en espera."""
 
     def _finalizar_con_cliente(self, ticket, coord, cliente):
-        self._con(coord).post(f'/api/tickets/{ticket.id}/solicitar_finalizacion/')
-        r = self._con(cliente).post(f'/api/tickets/{ticket.id}/responder_finalizacion/', {'acepta': True}, format='json')
+        # Servicio con coordinador: el coordinador asignado lo finaliza directamente.
+        r = self._con(coord).patch(f'/api/tickets/{ticket.id}/', {'estatus': 'terminado'}, format='json')
         self.assertEqual(r.status_code, 200, r.data)
 
     def test_recibe_el_mas_antiguo_en_espera_y_nadie_mas_se_lo_lleva(self):
@@ -738,7 +738,27 @@ class EdicionSoloCoordinadorAsignadoTests(BaseTickets):
         self.assertTrue(libre.ticket_id)
 
     def test_solo_el_coordinador_asignado_puede_solicitar_finalizacion(self):
-        self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{self.t.id}/solicitar_finalizacion/').status_code, 200)
+        directo = self._solicitud(coordinador=self.carlo, estatus='proceso', tipo_solicitud='tecnico')
+        self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{directo.id}/solicitar_finalizacion/').status_code, 200)
+        self.assertEqual(self._con(self.karen).post(f'/api/tickets/{directo.id}/solicitar_finalizacion/').status_code, 403)
+
+    def test_servicio_con_coordinador_se_finaliza_directo_sin_pedirle_al_cliente(self):
+        # No aplica "Solicitar finalización"...
+        r = self._con(self.carlo).post(f'/api/tickets/{self.t.id}/solicitar_finalizacion/')
+        self.assertEqual(r.status_code, 400)
+        # ...el coordinador asignado lo cierra él mismo
+        r = self._con(self.carlo).patch(f'/api/tickets/{self.t.id}/', {'estatus': 'terminado'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.t.refresh_from_db(); self.assertEqual(self.t.estatus, 'terminado')
+
+    def test_servicio_directo_con_tecnico_requiere_confirmacion_del_cliente(self):
+        directo = self._solicitud(coordinador=self.carlo, estatus='proceso', tipo_solicitud='tecnico')
+        r = self._con(self.carlo).patch(f'/api/tickets/{directo.id}/', {'estatus': 'terminado'}, format='json')
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{directo.id}/solicitar_finalizacion/').status_code, 200)
+        r = self._con(self.cli).post(f'/api/tickets/{directo.id}/responder_finalizacion/', {'acepta': True}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        directo.refresh_from_db(); self.assertEqual(directo.estatus, 'terminado')
 
     def test_eliminar_un_ticket_libre_es_solo_del_admin(self):
         libre = self._solicitud()
@@ -1151,3 +1171,32 @@ class ListaTicketsConOperadorTests(APITestCase):
             self.assertEqual(r.status_code, 200, usuario.rol)
             self.assertEqual(r.data['count'], 1, usuario.rol)
             self.assertEqual(r.data['results'][0]['operador_nombre'], 'Pedro López')
+
+
+class EditarMensajesChatTests(APITestCase):
+    """Clientes y coordinadores no editan los mensajes del chat; el Administrador sí (los suyos)."""
+
+    def setUp(self):
+        mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                     email_verificado=True)
+        self.cliente = mk('cli_chat', 'cliente')
+        self.coord = mk('coord_chat', 'coordinador')
+        self.admin = mk('adm_chat', 'admin')
+        self.ticket = Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1',
+                                            cliente=self.cliente, coordinador=self.coord, estatus='proceso')
+
+    def _editar(self, usuario):
+        c = ComentarioTicket.objects.create(ticket=self.ticket, autor=usuario,
+                                            autor_nombre=usuario.nombre, texto='original')
+        self.client.force_authenticate(usuario)
+        r = self.client.post(f'/api/tickets/{self.ticket.id}/editar_comentario/',
+                             {'comentario_id': c.id, 'texto': 'cambiado'}, format='json')
+        c.refresh_from_db()
+        return r.status_code, c.texto
+
+    def test_cliente_y_coordinador_no_editan(self):
+        self.assertEqual(self._editar(self.cliente), (403, 'original'))
+        self.assertEqual(self._editar(self.coord), (403, 'original'))
+
+    def test_admin_si_edita_lo_suyo(self):
+        self.assertEqual(self._editar(self.admin), (200, 'cambiado'))
