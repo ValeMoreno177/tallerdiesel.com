@@ -26,17 +26,21 @@ function tocarSonido(ctx) {
   })
 }
 
+function reproducirPendiente(ctx) {
+  if (sonidoPendiente && ctx.state === 'running') {
+    sonidoPendiente = false
+    tocarSonido(ctx)
+  }
+}
+
 export function activarSonido() {
   try {
     const AudioContextAPI = window.AudioContext || window.webkitAudioContext
     if (!AudioContextAPI) throw new Error('Este navegador no admite Web Audio API.')
-    contextoAudio ||= new AudioContextAPI()
+    if (!contextoAudio || contextoAudio.state === 'closed') contextoAudio = new AudioContextAPI()
     const reanudar = contextoAudio.state === 'suspended' ? contextoAudio.resume() : Promise.resolve()
     return reanudar.then(() => {
-      if (sonidoPendiente && contextoAudio.state === 'running') {
-        sonidoPendiente = false
-        tocarSonido(contextoAudio)
-      }
+      reproducirPendiente(contextoAudio)
       return contextoAudio.state === 'running'
     }).catch(e => {
       console.warn('No se pudo activar el sonido:', e)
@@ -49,7 +53,18 @@ export function activarSonido() {
 }
 
 export function reproducirSonido() {
-  if (!contextoAudio || contextoAudio.state !== 'running') {
+  if (!contextoAudio || contextoAudio.state === 'closed') {
+    sonidoPendiente = true
+    return
+  }
+  if (contextoAudio.state === 'suspended') {
+    sonidoPendiente = true
+    contextoAudio.resume()
+      .then(() => reproducirPendiente(contextoAudio))
+      .catch(e => console.warn('No se pudo reanudar el sonido de notificación:', e))
+    return
+  }
+  if (contextoAudio.state !== 'running') {
     sonidoPendiente = true
     return
   }
@@ -63,7 +78,7 @@ export function reproducirSonido() {
 const NotificacionesContext = createContext(null)
 
 /**
- * Consulta las notificaciones del usuario cada 5 s EN TODA LA APP (no solo en las
+ * Consulta las notificaciones del usuario cada segundo EN TODA LA APP (no solo en las
  * páginas que tienen la campana) y no depende del estatus de ningún ticket: los avisos
  * de mensajes siguen llegando aunque el servicio ya esté finalizado.
  * Cuando llega una notificación nueva suena y sale un aviso flotante.

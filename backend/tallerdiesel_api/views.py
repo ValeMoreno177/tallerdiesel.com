@@ -1893,7 +1893,7 @@ def revisar_alertas_sla():
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def mis_notificaciones(request):
-    """Se consulta cada 2 segundos desde el navegador. La revisión de SLA corre como máximo una vez por
+    """Se consulta cada segundo desde el navegador. La revisión de SLA corre como máximo una vez por
     segundo y se devuelven las 200 notificaciones más recientes. Las notificaciones
     viven en la base de datos: siguen ahí aunque la persona cierre sesión."""
     from django.core.cache import cache
