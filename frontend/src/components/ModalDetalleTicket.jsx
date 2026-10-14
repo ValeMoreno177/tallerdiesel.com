@@ -143,12 +143,11 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
                 ['Folio', localTicket.etiqueta || localTicket.ticket_id],
                 ['Empresa', localTicket.empresa],
                 ['Unidad', localTicket.unidad],
-                ['Cliente', localTicket.operador || '—'],
+                ['Operador', localTicket.operador || '—'],
                 ['Lugar', localTicket.lugar || '—'],
                 ['Fecha', localTicket.fecha],
                 ['Coordinador', localTicket.coordinador_nombre || '—'],
                 ['Técnico asignado', localTicket.tecnico_nombre || 'Aún no asignado'],
-                ['Operador', localTicket.operador_nombre || '—'],
               ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f3f4f6', fontSize: '0.875rem' }}>
                   <span style={{ color: '#6b7280' }}>{k}</span>
