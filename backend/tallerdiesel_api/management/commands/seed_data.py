@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
-from tallerdiesel_api.models import Tecnico, Operador, Ticket
+from tallerdiesel_api.models import Tecnico, Ticket
 from datetime import date
 
 User = get_user_model()
@@ -42,11 +42,6 @@ class Command(BaseCommand):
         cliente.email_verificado = True
         cliente.save()
 
-        self.stdout.write('Creando operadores...')
-        oper1, _ = Operador.objects.get_or_create(nombre='Refac Norte', defaults={'telefono': '8111234567'})
-        oper2, _ = Operador.objects.get_or_create(nombre='Partes Diesel', defaults={'telefono': '8119876543'})
-        oper3, _ = Operador.objects.get_or_create(nombre='Auto Partes GDL', defaults={'telefono': '3331234567'})
-
         self.stdout.write('Creando técnicos...')
         tecnicos = [
             {'nombre': 'Arturo Jiménez Morales', 'categoria': 'aire', 'ciudad': 'Tijuana',
@@ -77,13 +72,13 @@ class Command(BaseCommand):
         tickets_data = [
             {'empresa': 'Transportes XYZ', 'fecha': date(2025, 1, 10), 'estatus': 'terminado',
              'unidad': 'Kenworth T680', 'lugar': 'Monterrey, NL', 'operador': 'Juan Pérez',
-             'reparacion': 'Cambio de motor completo', 'coordinador': coord, 'operador_obj': oper1,
+             'reparacion': 'Cambio de motor completo', 'coordinador': coord,
              'cliente': cliente, 'sal_ganancia': 5000, 'mo_ganancia': 8000,
              'ref_ganancia': 7000, 'factura': 'FAC-001',
              'fecha_factura': date(2025, 1, 12), 'estatus_factura': 'pagada'},
             {'empresa': 'Fletes del Norte', 'fecha': date(2025, 1, 15), 'estatus': 'terminado',
              'unidad': 'Freightliner M2', 'lugar': 'Saltillo, Coah', 'operador': 'Luis Gómez',
-             'reparacion': 'Frenos y suspensión', 'coordinador': coord, 'operador_obj': oper2,
+             'reparacion': 'Frenos y suspensión', 'coordinador': coord,
              'sal_ganancia': 2000, 'mo_ganancia': 5000, 'ref_ganancia': 4000,
              'factura': 'FAC-002', 'fecha_factura': date(2025, 1, 17), 'estatus_factura': 'pendiente'},
             {'empresa': 'Carga Rápida SA', 'fecha': date(2025, 2, 3), 'estatus': 'proceso',
@@ -98,7 +93,7 @@ class Command(BaseCommand):
              'estatus_factura': 'pendiente'},
             {'empresa': 'Logística MX', 'fecha': date(2025, 3, 5), 'estatus': 'terminado',
              'unidad': 'Peterbilt 579', 'lugar': 'Guadalajara, Jal', 'operador': 'Ana Torres',
-             'reparacion': 'Cambio de frenos', 'coordinador': coord, 'operador_obj': oper3,
+             'reparacion': 'Cambio de frenos', 'coordinador': coord,
              'sal_ganancia': 1500, 'mo_ganancia': 4000, 'ref_ganancia': 3000,
              'factura': 'FAC-003', 'fecha_factura': date(2025, 3, 7), 'estatus_factura': 'pagada'},
         ]
