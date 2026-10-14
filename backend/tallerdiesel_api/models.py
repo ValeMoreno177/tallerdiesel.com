@@ -147,7 +147,7 @@ class ConfiguracionEmpresa(models.Model):
         super().save(*args, **kwargs)
 
 
-class Proveedor(models.Model):
+class Operador(models.Model):
     nombre  = models.CharField(max_length=200)
     telefono= models.CharField(max_length=20, blank=True)
     email   = models.EmailField(blank=True)
