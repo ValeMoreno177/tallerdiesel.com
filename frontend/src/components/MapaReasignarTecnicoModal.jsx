@@ -148,7 +148,12 @@ export default function MapaReasignarTecnicoModal({ solicitud, ticketId: ticketI
                   <Popup>
                     <strong>{t.nombre}</strong><br />
                     {t.categoria_display} · {t.ciudad}<br />
-                    <span style={{ color: '#f59e0b' }}>{estrellas(t.calificacion)}</span> {t.calificacion.toFixed(1)}<br />
+                    {t.total_calificaciones > 0 && t.calificacion_promedio != null ? (
+                      <>
+                        <span style={{ color: '#f59e0b' }}>{estrellas(t.calificacion_promedio)}</span>{' '}
+                        {Number(t.calificacion_promedio).toFixed(1)} · {t.total_calificaciones} evaluación{t.total_calificaciones === 1 ? '' : 'es'}<br />
+                      </>
+                    ) : <>Sin calificaciones<br /></>}
                     {t.disponible ? '🟢 Disponible' : '🔴 Ocupado'}
                     {t.distancia_km != null && <><br />A {t.distancia_km} km del servicio</>}
                   </Popup>
@@ -180,8 +185,16 @@ export default function MapaReasignarTecnicoModal({ solicitud, ticketId: ticketI
                       {t.disponible ? <span style={{ color: '#059669' }}>Disponible</span> : <span style={{ color: '#dc2626' }}>Ocupado</span>}
                     </span>
                     <span style={{ display: 'block', fontSize: '0.75rem' }}>
-                      <span style={{ color: '#f59e0b' }} aria-label={`Calificación ${t.calificacion.toFixed(1)} de 5`}>{estrellas(t.calificacion)}</span>
-                      <span style={{ color: '#6b7280' }}> {t.calificacion.toFixed(1)}</span>
+                      {t.total_calificaciones > 0 && t.calificacion_promedio != null ? (
+                        <>
+                          <span style={{ color: '#f59e0b' }} aria-label={`Calificación ${Number(t.calificacion_promedio).toFixed(1)} de 5`}>
+                            {estrellas(t.calificacion_promedio)}
+                          </span>
+                          <span style={{ color: '#6b7280' }}>
+                            {' '}{Number(t.calificacion_promedio).toFixed(1)} · {t.total_calificaciones} evaluación{t.total_calificaciones === 1 ? '' : 'es'}
+                          </span>
+                        </>
+                      ) : <span style={{ color: '#6b7280' }}>Sin calificaciones</span>}
                       {t.distancia_km != null && <span style={{ color: '#2563eb', fontWeight: 600 }}> · {t.distancia_km} km</span>}
                     </span>
                   </span>

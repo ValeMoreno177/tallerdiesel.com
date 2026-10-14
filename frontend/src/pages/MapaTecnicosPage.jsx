@@ -432,6 +432,12 @@ export default function MapaTecnicosPage() {
                         {t.categoria_display}
                       </span>
                       <br />
+                      <span style={{ fontSize: "0.85rem" }}>
+                        {t.total_calificaciones > 0 && t.calificacion_promedio != null
+                          ? `⭐ ${Number(t.calificacion_promedio).toFixed(1)} · ${t.total_calificaciones} evaluación${t.total_calificaciones === 1 ? "" : "es"}`
+                          : "Sin calificaciones"}
+                      </span>
+                      <br />
                       <div style={{ marginTop: 6, fontSize: "0.85rem" }}>
                         📍 {t.ciudad}, {t.estado}
                         <br />

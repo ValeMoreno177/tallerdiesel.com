@@ -256,6 +256,8 @@ class OpinionSerializer(serializers.ModelSerializer):
 class TecnicoSerializer(serializers.ModelSerializer):
     opiniones = OpinionSerializer(many=True, read_only=True)
     categoria_display = serializers.SerializerMethodField()
+    calificacion_promedio = serializers.SerializerMethodField()
+    total_calificaciones = serializers.SerializerMethodField()
 
     class Meta:
         model = Tecnico
@@ -263,6 +265,12 @@ class TecnicoSerializer(serializers.ModelSerializer):
 
     def get_categoria_display(self, obj):
         return obj.get_categoria_display()
+
+    def get_calificacion_promedio(self, obj):
+        return getattr(obj, 'promedio_opiniones', None)
+
+    def get_total_calificaciones(self, obj):
+        return getattr(obj, 'total_opiniones', 0)
 
 
 class SolicitudServicioSerializer(serializers.ModelSerializer):

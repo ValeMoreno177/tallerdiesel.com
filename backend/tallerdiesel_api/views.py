@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.http import HttpResponse, FileResponse, Http404
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
-from django.db.models import Avg, Q, F
+from django.db.models import Avg, Count, Q, F
 from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
@@ -32,6 +32,32 @@ from .serializers import (
 )
 
 User = get_user_model()
+
+
+def _con_resumen_calificaciones(queryset):
+    return queryset.annotate(
+        promedio_opiniones=Avg('opiniones__calificacion'),
+        total_opiniones=Count(
+            'opiniones',
+            filter=Q(opiniones__calificacion__isnull=False),
+        ),
+    )
+
+
+def _estrellas(valor):
+    """Convierte a entero 1-5; devuelve None si no es válido."""
+    try:
+        numero = int(valor)
+    except (TypeError, ValueError):
+        return None
+    return numero if 1 <= numero <= 5 else None
+
+
+def _actualizar_calificacion_tecnico(tecnico):
+    promedio = tecnico.opiniones.exclude(calificacion__isnull=True).aggregate(p=Avg('calificacion'))['p']
+    if promedio is not None:
+        tecnico.calificacion = round(promedio, 2)
+        tecnico.save(update_fields=['calificacion'])
 
 
 def generar_pdf_ticket(ticket):
@@ -938,12 +964,15 @@ class TicketViewSet(viewsets.ModelViewSet):
         elif ticket.latitud is not None and ticket.longitud is not None:
             ref = (ticket.latitud, ticket.longitud)
         resultado = []
-        for t in Tecnico.objects.filter(activo=True):
+        tecnicos = _con_resumen_calificaciones(Tecnico.objects.filter(activo=True))
+        for t in tecnicos:
             resultado.append({
                 'id': t.id, 'nombre': t.nombre, 'categoria': t.categoria,
                 'categoria_display': t.get_categoria_display(), 'ciudad': t.ciudad, 'estado': t.estado,
                 'telefono': t.telefono, 'latitud': t.latitud, 'longitud': t.longitud,
                 'calificacion': round(t.calificacion, 1), 'disponible': t.disponible,
+                'calificacion_promedio': round(float(t.promedio_opiniones), 1) if t.promedio_opiniones is not None else None,
+                'total_calificaciones': t.total_opiniones,
                 'es_actual': t.id == ticket.tecnico_id,
                 'distancia_km': round(distancia_km(ref[0], ref[1], t.latitud, t.longitud), 1) if ref else None,
             })
@@ -1222,15 +1251,6 @@ class TicketViewSet(viewsets.ModelViewSet):
             )
         return Response(TicketSerializer(ticket, context={'request': request}).data)
 
-    @staticmethod
-    def _estrellas(valor):
-        """Convierte a entero 1-5; devuelve None si no es válido."""
-        try:
-            n = int(valor)
-        except (TypeError, ValueError):
-            return None
-        return n if 1 <= n <= 5 else None
-
     @action(detail=True, methods=['post'])
     def calificar(self, request, pk=None):
         """El cliente califica un servicio ya finalizado: estrellas (1-5) al servicio y,
@@ -1241,32 +1261,33 @@ class TicketViewSet(viewsets.ModelViewSet):
         if ticket.estatus != 'terminado':
             return Response({'error': 'Solo puedes calificar un servicio finalizado.'}, status=400)
 
-        cal_servicio = self._estrellas(request.data.get('calificacion_servicio'))
+        cal_servicio = _estrellas(request.data.get('calificacion_servicio'))
         if cal_servicio is None:
             return Response({'error': 'Califica el servicio con un número de estrellas entre 1 y 5.'}, status=400)
         cal_tecnico = None
         if ticket.tecnico_id:
-            cal_tecnico = self._estrellas(request.data.get('calificacion_tecnico'))
+            cal_tecnico = _estrellas(request.data.get('calificacion_tecnico'))
             if cal_tecnico is None:
                 return Response({'error': 'Califica al técnico con un número de estrellas entre 1 y 5.'}, status=400)
         comentario = (request.data.get('comentario') or '').strip()[:1000]
 
         with transaction.atomic():
-            if Opinion.objects.select_for_update().filter(ticket=ticket).exists():
+            ticket = Ticket.objects.select_for_update().get(pk=ticket.pk)
+            if Opinion.objects.filter(ticket=ticket).exists():
                 return Response({'error': 'Ya calificaste este servicio.'}, status=400)
+            tecnico = None
+            if ticket.tecnico_id:
+                tecnico = Tecnico.objects.select_for_update().get(pk=ticket.tecnico_id)
             opinion = Opinion.objects.create(
-                tecnico=ticket.tecnico if ticket.tecnico_id else None,
+                tecnico=tecnico,
                 ticket=ticket,
                 nombre_autor=request.user.nombre_completo[:100],
                 calificacion=cal_tecnico,
                 calificacion_servicio=cal_servicio,
                 comentario=comentario,
             )
-            if ticket.tecnico_id:
-                promedio = ticket.tecnico.opiniones.exclude(calificacion__isnull=True).aggregate(p=Avg('calificacion'))['p']
-                if promedio is not None:
-                    ticket.tecnico.calificacion = round(promedio, 2)
-                    ticket.tecnico.save(update_fields=['calificacion'])
+            if tecnico:
+                _actualizar_calificacion_tecnico(tecnico)
             # Ya calificó: el aviso de la campana deja de estar pendiente
             Notificacion.objects.filter(destinatario=request.user, tipo='calificar_servicio',
                                         referencia_id=ticket.id, leida=False).update(leida=True)
@@ -1458,7 +1479,7 @@ class TicketViewSet(viewsets.ModelViewSet):
 # ── Técnicos ──────────────────────────────────────────────────────────────────
 
 class TecnicoViewSet(viewsets.ModelViewSet):
-    queryset = Tecnico.objects.filter(activo=True)
+    queryset = _con_resumen_calificaciones(Tecnico.objects.filter(activo=True))
     serializer_class = TecnicoSerializer
     permission_classes = [LecturaPublicaEdicionConPermiso]
 
@@ -1579,15 +1600,21 @@ class TecnicoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[AllowAny])
     def agregar_opinion(self, request, pk=None):
         tecnico = self.get_object()
-        serializer = OpinionSerializer(data={**request.data, 'tecnico': tecnico.id})
-        if serializer.is_valid():
-            serializer.save()
-            promedio = tecnico.opiniones.exclude(calificacion__isnull=True).aggregate(p=Avg('calificacion'))['p']
-            if promedio is not None:
-                tecnico.calificacion = promedio
-                tecnico.save()
-            return Response(serializer.data, status=201)
-        return Response(serializer.errors, status=400)
+        calificacion = _estrellas(request.data.get('calificacion'))
+        if calificacion is None:
+            return Response({'calificacion': ['Usa un número de estrellas entre 1 y 5.']}, status=400)
+        serializer = OpinionSerializer(data={
+            'nombre_autor': request.data.get('nombre_autor'),
+            'calificacion': calificacion,
+            'comentario': request.data.get('comentario', ''),
+        })
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        with transaction.atomic():
+            tecnico = Tecnico.objects.select_for_update().get(pk=tecnico.pk)
+            opinion = serializer.save(tecnico=tecnico, ticket=None, calificacion_servicio=None)
+            _actualizar_calificacion_tecnico(tecnico)
+        return Response(OpinionSerializer(opinion).data, status=201)
 
 
 # ── Proveedores ───────────────────────────────────────────────────────────────

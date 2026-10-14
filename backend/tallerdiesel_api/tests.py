@@ -70,6 +70,61 @@ class CalificacionServicioTests(APITestCase):
         self.assertFalse(d['puede_calificar'])
         self.assertEqual(d['calificacion_detalle']['calificacion_servicio'], 4)
 
+    def test_promedio_y_total_se_actualizan_con_cada_evaluacion(self):
+        self.ticket.estatus = 'terminado'
+        self.ticket.save()
+        self.client.force_authenticate(self.cliente)
+        r = self.client.post(
+            f'/api/tickets/{self.ticket.id}/calificar/',
+            {'calificacion_servicio': 5, 'calificacion_tecnico': 2},
+            format='json',
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+
+        segundo_ticket = Ticket.objects.create(
+            empresa='ACME', fecha=date.today(), unidad='U2',
+            cliente=self.otro, coordinador=self.coord, tecnico=self.tec, estatus='terminado',
+        )
+        self.client.force_authenticate(self.otro)
+        r = self.client.post(
+            f'/api/tickets/{segundo_ticket.id}/calificar/',
+            {'calificacion_servicio': 4, 'calificacion_tecnico': 4},
+            format='json',
+        )
+        self.assertEqual(r.status_code, 201, r.data)
+
+        self.tec.refresh_from_db()
+        self.assertEqual(self.tec.calificacion, 3)
+
+        response = self.client.get('/api/tecnicos/')
+        tecnicos = response.data.get('results', response.data) if isinstance(response.data, dict) else response.data
+        datos_tecnico = next(t for t in tecnicos if t['id'] == self.tec.id)
+        self.assertEqual(float(datos_tecnico['calificacion_promedio']), 3)
+        self.assertEqual(datos_tecnico['total_calificaciones'], 2)
+
+        sin_votos = Tecnico.objects.create(
+            nombre='Sin votos', categoria='motor_diesel', ciudad='X', estado='Y',
+            telefono='2', latitud=1, longitud=1,
+        )
+        response = self.client.get('/api/tecnicos/')
+        tecnicos = response.data.get('results', response.data) if isinstance(response.data, dict) else response.data
+        datos_sin_votos = next(t for t in tecnicos if t['id'] == sin_votos.id)
+        self.assertIsNone(datos_sin_votos['calificacion_promedio'])
+        self.assertEqual(datos_sin_votos['total_calificaciones'], 0)
+
+    def test_opinion_directa_rechaza_estrellas_fuera_de_rango_y_actualiza_promedio(self):
+        url = f'/api/tecnicos/{self.tec.id}/agregar_opinion/'
+        respuesta = self.client.post(url, {'nombre_autor': 'Cliente', 'calificacion': 6}, format='json')
+        self.assertEqual(respuesta.status_code, 400)
+        respuesta = self.client.post(
+            url,
+            {'nombre_autor': 'Cliente', 'calificacion': 4, 'comentario': 'Buen servicio'},
+            format='json',
+        )
+        self.assertEqual(respuesta.status_code, 201, respuesta.data)
+        self.tec.refresh_from_db()
+        self.assertEqual(self.tec.calificacion, 4)
+
     def test_no_se_califica_si_no_esta_finalizado_ni_ajeno_ni_staff(self):
         url = f'/api/tickets/{self.ticket.id}/calificar/'
         body = {'calificacion_servicio': 5, 'calificacion_tecnico': 5}
@@ -801,6 +856,8 @@ class ReasignarTecnicoMapaTests(BaseTickets):
         cerca = r.data['tecnicos'][0]
         self.assertLess(cerca['distancia_km'], 5)
         self.assertEqual(cerca['calificacion'], 4.5)
+        self.assertIsNone(cerca['calificacion_promedio'])
+        self.assertEqual(cerca['total_calificaciones'], 0)
         lejos = r.data['tecnicos'][1]
         self.assertGreater(lejos['distancia_km'], 1500)
         self.assertTrue(lejos['es_actual'])                           # el técnico que tiene ahora

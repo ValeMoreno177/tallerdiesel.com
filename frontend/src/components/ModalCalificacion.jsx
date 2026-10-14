@@ -12,7 +12,7 @@ const MAX_COMENTARIO = 500
  *
  * `pendiente` = { id, ticket_id, tecnico_nombre, unidad, tipo_unidad }
  */
-export default function ModalCalificacion({ pendiente, onAplazar, onEnviado }) {
+export default function ModalCalificacion({ pendiente, onEnviado }) {
   const tieneTecnico = !!pendiente.tecnico_nombre
   const [calTecnico, setCalTecnico] = useState(0)
   const [calServicio, setCalServicio] = useState(0)
@@ -22,13 +22,6 @@ export default function ModalCalificacion({ pendiente, onAplazar, onEnviado }) {
   const [enviado, setEnviado] = useState(false)
 
   const listo = calServicio > 0 && (!tieneTecnico || calTecnico > 0)
-
-  // Esc = "Más tarde"
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && !enviando && !enviado) onAplazar() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [enviando, enviado, onAplazar])
 
   // Tras agradecer, se cierra sola
   useEffect(() => {
@@ -100,8 +93,8 @@ export default function ModalCalificacion({ pendiente, onAplazar, onEnviado }) {
             {error && (
               <div role="alert" style={{ background: '#fef2f2', color: '#991b1b', padding: '8px 12px', borderRadius: 8, fontSize: '0.85rem' }}>{error}</div>
             )}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button type="button" className="btn btn-ghost" disabled={enviando} onClick={onAplazar}>Más tarde</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+              <span style={{ color: '#6b7280', fontSize: '0.75rem' }}>Calificación obligatoria para continuar</span>
               <button type="button" className="btn btn-primary" disabled={!listo || enviando} onClick={enviar}>
                 {enviando ? 'Enviando...' : 'Enviar calificación'}
               </button>
