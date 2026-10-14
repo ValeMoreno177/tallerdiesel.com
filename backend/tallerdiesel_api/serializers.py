@@ -207,7 +207,11 @@ class TicketSerializer(serializers.ModelSerializer):
         return obj.eliminado_por.nombre_completo if obj.eliminado_por else None
 
     def get_operador_nombre(self, obj):
-        return obj.operador.nombre if obj.operador else None
+        # 'operador' ahora es texto libre (ya no es una relación al catálogo de Operadores)
+        operador = obj.operador
+        if not operador:
+            return None
+        return operador if isinstance(operador, str) else getattr(operador, 'nombre', str(operador))
 
     def get_tecnico_nombre(self, obj):
         return obj.tecnico.nombre if obj.tecnico else None

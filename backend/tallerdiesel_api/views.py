@@ -1,2045 +1,1153 @@
-from rest_framework import viewsets, status
-from django.shortcuts import get_object_or_404
-from rest_framework.decorators import api_view, permission_classes, action, throttle_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission, SAFE_METHODS
-from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import get_user_model
-from django.core.mail import send_mail
-from django.conf import settings
-from django.utils import timezone
-from django.http import HttpResponse, FileResponse, Http404
-from rest_framework.parsers import MultiPartParser, FormParser
-from django.db import transaction
-from django.db.models import Avg, Count, Q, F, OuterRef, Subquery, IntegerField, Value
-from django.db.models.functions import Coalesce
-from decimal import Decimal
 from datetime import date, timedelta
-from openpyxl import Workbook, load_workbook
-import io
-from PIL import Image, UnidentifiedImageError
-from threading import Thread
 
-from .models import (Ticket, Tecnico, Opinion, Operador, SolicitudServicio,
-                     Notificacion, ComentarioTicket, TokenVerificacion, ConfiguracionEmpresa,
-                     CodigoRecuperacion, UnidadFlotilla, EvidenciaTicket, FotoPerfil)
-from .servicios import (puede_gestionar_ticket, reclamar_ticket, asignar_siguiente_en_espera,
-                        asignar_coordinador_automatico, distancia_km, coordenada_valida)
-from .emails import enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
-from .serializers import (
-    UsuarioSerializer, RegistroSerializer, TicketSerializer,
-    TecnicoSerializer, OpinionSerializer, OperadorSerializer,
-    SolicitudServicioSerializer, NotificacionSerializer, ComentarioTicketSerializer,
-    ConfiguracionEmpresaSerializer, UnidadFlotillaSerializer, EvidenciaTicketSerializer
-)
+from django.contrib.auth import get_user_model
+from rest_framework.test import APITestCase
+from django.utils import timezone
 
-
-def _con_mensajes_no_leidos(queryset, usuario):
-    pendientes = Notificacion.objects.filter(
-        destinatario=usuario,
-        referencia_id=OuterRef('pk'),
-        tipo='comentario',
-        leida=False,
-    ).values('referencia_id').annotate(total=Count('id')).values('total')[:1]
-    return queryset.annotate(
-        mensajes_no_leidos=Coalesce(
-            Subquery(pendientes, output_field=IntegerField()),
-            Value(0),
-            output_field=IntegerField(),
-        )
-    )
+from .models import ComentarioTicket, Notificacion, Opinion, Tecnico, Ticket
 
 User = get_user_model()
 
 
-def _enviar_html_en_segundo_plano(**kwargs):
-    Thread(target=enviar_html, kwargs=kwargs, name='email-notificacion', daemon=True).start()
+class CalificacionServicioTests(APITestCase):
+    """Al finalizar un servicio se pide al cliente calificar al técnico."""
 
+    def setUp(self):
+        mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                     email_verificado=True)
+        self.cliente = mk('cli', 'cliente')
+        self.otro = mk('otro', 'cliente')
+        self.coord = mk('coord', 'coordinador')
+        self.admin = mk('adm', 'admin')
+        self.tec = Tecnico.objects.create(nombre='Juan', categoria='motor_diesel', ciudad='X', estado='Y',
+                                          telefono='1', latitud=0, longitud=0)
+        self.ticket = Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1',
+                                            cliente=self.cliente, coordinador=self.coord,
+                                            tecnico=self.tec, estatus='proceso')
 
-def _con_resumen_calificaciones(queryset):
-    return queryset.annotate(
-        promedio_opiniones=Avg('opiniones__calificacion'),
-        total_opiniones=Count(
-            'opiniones',
-            filter=Q(opiniones__calificacion__isnull=False),
-        ),
-    )
+    def _finalizar_con_cliente(self):
+        self.client.force_authenticate(self.coord)
+        self.assertEqual(self.client.post(f'/api/tickets/{self.ticket.id}/solicitar_finalizacion/').status_code, 200)
+        self.client.force_authenticate(self.cliente)
+        r = self.client.post(f'/api/tickets/{self.ticket.id}/responder_finalizacion/', {'acepta': True}, format='json')
+        self.assertEqual(r.status_code, 200)
 
+    def test_finalizar_crea_aviso_y_pendiente(self):
+        self._finalizar_con_cliente()
+        self.ticket.refresh_from_db()
+        self.assertIsNotNone(self.ticket.fecha_finalizacion)
+        self.assertEqual(Notificacion.objects.filter(destinatario=self.cliente, tipo='calificar_servicio').count(), 1)
+        r = self.client.get('/api/tickets/pendientes_calificar/')
+        self.assertEqual([t['id'] for t in r.data], [self.ticket.id])
+        self.assertEqual(r.data[0]['tecnico_nombre'], 'Juan')
 
-def _estrellas(valor):
-    """Convierte a entero 1-5; devuelve None si no es válido."""
-    try:
-        numero = int(valor)
-    except (TypeError, ValueError):
-        return None
-    return numero if 1 <= numero <= 5 else None
+    def test_el_admin_ya_no_edita_tickets_asi_que_no_los_finaliza(self):
+        # Solo el coordinador asignado edita; el admin solo lee. (Con cliente, el coordinador tampoco cierra solo.)
+        self.client.force_authenticate(self.admin)
+        r = self.client.patch(f'/api/tickets/{self.ticket.id}/', {'estatus': 'terminado'}, format='json')
+        self.assertEqual(r.status_code, 403)
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.estatus, 'proceso')
 
+    def test_calificar_ok_y_no_se_repite(self):
+        self._finalizar_con_cliente()
+        url = f'/api/tickets/{self.ticket.id}/calificar/'
+        # faltan estrellas
+        self.assertEqual(self.client.post(url, {}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(url, {'calificacion_tecnico': 6}, format='json').status_code, 400)
+        # comentario opcional
+        r = self.client.post(url, {'calificacion_tecnico': 2}, format='json')
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(self.client.post(url, {'calificacion_tecnico': 5}, format='json').status_code, 400)
+        self.tec.refresh_from_db()
+        self.assertEqual(self.tec.calificacion, 2)
+        op = Opinion.objects.get(ticket=self.ticket)
+        self.assertEqual((op.calificacion, op.calificacion_servicio, op.comentario), (2, None, ''))
+        # ya no está pendiente y el aviso de la campana queda leído
+        self.assertEqual(self.client.get('/api/tickets/pendientes_calificar/').data, [])
+        self.assertFalse(Notificacion.objects.filter(tipo='calificar_servicio', leida=False).exists())
+        d = self.client.get(f'/api/tickets/{self.ticket.id}/').data
+        self.assertTrue(d['calificado'])
+        self.assertFalse(d['puede_calificar'])
+        self.assertEqual(d['calificacion_detalle']['calificacion_tecnico'], 2)
+        self.assertNotIn('calificacion_servicio', d['calificacion_detalle'])
 
-def _actualizar_calificacion_tecnico(tecnico):
-    promedio = tecnico.opiniones.exclude(calificacion__isnull=True).aggregate(p=Avg('calificacion'))['p']
-    if promedio is not None:
-        tecnico.calificacion = round(promedio, 2)
-        tecnico.save(update_fields=['calificacion'])
-
-
-def generar_pdf_ticket(ticket):
-    """Genera un comprobante de servicio en PDF (reportlab) para un Ticket."""
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib import colors
-    from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter,
-                             topMargin=1.5 * cm, bottomMargin=1.5 * cm,
-                             leftMargin=1.5 * cm, rightMargin=1.5 * cm)
-    styles = getSampleStyleSheet()
-    titulo_style = ParagraphStyle('Titulo', parent=styles['Heading1'], textColor=colors.HexColor('#0d0d0d'))
-    subtitulo_style = ParagraphStyle('Subtitulo', parent=styles['Normal'], textColor=colors.HexColor('#6b7280'), fontSize=10)
-
-    elementos = []
-    elementos.append(Paragraph('Taller<font color="#e85d04">diesel</font> — Comprobante de servicio', titulo_style))
-    elementos.append(Paragraph(f'Ticket {ticket.etiqueta}', subtitulo_style))
-    elementos.append(Spacer(1, 0.6 * cm))
-
-    datos = [
-        ['Empresa', ticket.empresa or '—'],
-        ['Fecha', str(ticket.fecha)],
-        ['Estatus', ticket.get_estatus_display()],
-        ['Tipo de unidad', ticket.tipo_unidad or '—'],
-        ['Unidad', ticket.unidad or '—'],
-        ['Lugar', ticket.lugar or '—'],
-        ['Cliente', ticket.operador.nombre if ticket.operador else '—'],
-        ['Técnico asignado', ticket.tecnico.nombre if ticket.tecnico else 'Sin asignar'],
-        ['Coordinador', ticket.coordinador.nombre_completo if ticket.coordinador else 'Sin asignar'],
-    ]
-    tabla_datos = Table(datos, colWidths=[5 * cm, 10 * cm])
-    tabla_datos.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#374151')),
-        ('TEXTCOLOR', (1, 0), (1, -1), colors.HexColor('#111827')),
-        ('FONTSIZE', (0, 0), (-1, -1), 9.5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('LINEBELOW', (0, 0), (-1, -2), 0.5, colors.HexColor('#e5e7eb')),
-    ]))
-    elementos.append(tabla_datos)
-    elementos.append(Spacer(1, 0.6 * cm))
-
-    elementos.append(Paragraph('Descripción del servicio', styles['Heading3']))
-    elementos.append(Paragraph(ticket.reparacion or 'Sin descripción registrada.', styles['Normal']))
-    elementos.append(Spacer(1, 0.6 * cm))
-
-    elementos.append(Paragraph('Total del servicio', styles['Heading3']))
-    fmt = lambda n: f'${float(n or 0):,.2f}'
-    totales = [
-        ['Subtotal', fmt(ticket.total)],
-        ['IVA (16%)', fmt(ticket.iva)],
-        ['Total a pagar', fmt(ticket.total_f)],
-        ['Factura', ticket.factura or 'Sin registrar'],
-        ['Estatus de factura', dict(Ticket.EST_FACTURA_CHOICES).get(ticket.estatus_factura, ticket.estatus_factura or '—')],
-    ]
-    tabla_totales = Table(totales, colWidths=[5 * cm, 10 * cm])
-    tabla_totales.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME', (0, 2), (1, 2), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9.5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('LINEBELOW', (0, 0), (-1, -2), 0.5, colors.HexColor('#e5e7eb')),
-    ]))
-    elementos.append(tabla_totales)
-    elementos.append(Spacer(1, 1 * cm))
-    elementos.append(Paragraph('Gracias por confiar en TallerDiesel — Auxilio Carretero.', subtitulo_style))
-
-    doc.build(elementos)
-    buffer.seek(0)
-    response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
-    nombre_pdf = ticket.ticket_id or 'solicitud-%s' % ticket.pk
-    response['Content-Disposition'] = f'attachment; filename="{nombre_pdf}.pdf"'
-    return response
-
-
-# ── Correos compartidos entre coordinadores ──────────────────────────────────
-
-def _usuario_por_correo(email, username=None, **filtros):
-    """Busca la cuenta de un correo. Varios coordinadores pueden compartir correo (lo da de alta el
-    Administrador), así que el correo solo identifica la cuenta cuando es única; si no, se pide el
-    nombre de usuario. Devuelve (usuario, ambiguo)."""
-    qs = User.objects.filter(email__iexact=email, **filtros)
-    if username:
-        qs = qs.filter(username=str(username).strip())
-    candidatos = list(qs[:2])
-    if len(candidatos) == 1:
-        return candidatos[0], False
-    return None, len(candidatos) > 1
-
-
-def _correos_unicos(correos):
-    """Quita correos repetidos (sin distinguir mayúsculas) para no mandar el mismo mensaje dos veces."""
-    vistos, resultado = set(), []
-    for c in correos:
-        c = (c or '').strip()
-        if c and c.lower() not in vistos:
-            vistos.add(c.lower())
-            resultado.append(c)
-    return resultado
-
-
-MSG_CORREO_COMPARTIDO = 'Este correo lo comparten varias cuentas. Escribe tu nombre de usuario para continuar.'
-
-
-# ── Límites de solicitudes (fuerza bruta) ────────────────────────────────────
-
-class LoginRateThrottle(AnonRateThrottle):
-    scope = 'login'
-
-
-class CodigoRateThrottle(AnonRateThrottle):
-    scope = 'auth_codigo'
-
-
-class CambioPasswordThrottle(UserRateThrottle):
-    scope = 'cambiar_password'
-
-
-# Ventana de validez de los códigos de verificación / recuperación
-MINUTOS_VALIDEZ_CODIGO = 15
-MAX_INTENTOS_CODIGO = 5
-
-
-# ── Permisos personalizados ───────────────────────────────────────────────────
-
-class EsAdminOPermisoEdicion(BasePermission):
-    """Acceso de escritura para Administrador siempre, y para Coordinador
-    solo si el Administrador le otorgó el permiso 'puede_editar_sistema'.
-    Lectura abierta a cualquier usuario autenticado."""
-
-    def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        if request.method in SAFE_METHODS:
-            return True
-        return request.user.rol == 'admin' or (
-            request.user.rol == 'coordinador' and request.user.puede_editar_sistema)
-
-
-class SoloAdmin(BasePermission):
-    """Acceso de escritura exclusivo del Administrador (no delegable)."""
-
-    def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        if request.method in SAFE_METHODS:
-            return True
-        return request.user.rol == 'admin'
-
-
-class LecturaPublicaEdicionConPermiso(BasePermission):
-    """Catálogos (técnicos, operadores): lectura pública, escritura solo
-    para Administrador o Coordinador con permiso de edición otorgado."""
-
-    def has_permission(self, request, view):
-        if request.method in SAFE_METHODS:
-            return True
-        if not (request.user and request.user.is_authenticated):
-            return False
-        return request.user.rol == 'admin' or (
-            request.user.rol == 'coordinador' and request.user.puede_editar_sistema)
-
-
-class PuedeEditarTicket(BasePermission):
-    """El ticket es visible para Cliente, Coordinador y Administrador, pero SOLO el coordinador asignado
-    puede editarlo (datos, técnico, solicitar finalización, eliminarlo). Los demás roles lo ven en modo
-    lectura; el Administrador conserva las acciones de administración (asignar coordinador, permitir edición
-    de un ticket cerrado, papelera). Si un ticket aún no tiene coordinador, el primer coordinador que lo
-    atiende se queda con él.
-    El Cliente nunca crea tickets manualmente (se generan al solicitar un servicio), pero sí puede editar
-    unidad/tipo de unidad/descripción de su propio ticket y comentarlo, mientras no esté finalizado."""
-
-    # Acciones de EDICIÓN: requieren ser el coordinador asignado (o tomar el ticket si está libre)
-    ACCIONES_EDICION = ('update', 'partial_update', 'destroy', 'asignar_tecnico', 'solicitar_finalizacion', 'subir_evidencia')
-    # Acciones de ADMINISTRACIÓN que sigue haciendo el Administrador
-    ACCIONES_ADMIN = ('destroy', 'restaurar', 'tomar_como_coordinador', 'permitir_edicion_coordinador')
-    message = 'Solo el coordinador asignado puede editar este ticket.'
-
-    def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        if request.method in SAFE_METHODS:
-            return True
-        if view.action == 'create':
-            return request.user.rol in ('admin', 'coordinador')
-        return True  # objeto se valida en has_object_permission
-
-    def has_object_permission(self, request, view, obj):
-        if request.method in SAFE_METHODS:
-            return obj.cliente_id == request.user.id or request.user.rol in ('admin', 'coordinador')
-        rol = request.user.rol
-        # Adjuntar evidencia al chat no modifica los datos del ticket: cualquier miembro
-        # del equipo que puede consultar el servicio puede aportar archivos.
-        if rol in ('admin', 'coordinador') and view.action == 'subir_evidencia':
-            return True
-        if rol == 'admin':
-            if view.action in self.ACCIONES_EDICION:
-                return puede_gestionar_ticket(request.user, obj) or view.action in self.ACCIONES_ADMIN
-            return True
-        if rol == 'coordinador':
-            if view.action in self.ACCIONES_EDICION:
-                if view.action == 'destroy':        # un ticket libre solo lo elimina el Administrador
-                    return obj.coordinador_id == request.user.id
-                return puede_gestionar_ticket(request.user, obj)
-            if view.action in ('permitir_edicion_coordinador',):
-                return False
-            return True
-        if obj.cliente_id != request.user.id:
-            return False
-        # Cliente: solo su propio ticket
-        if view.action in ('agregar_comentario', 'editar_comentario', 'subir_evidencia'):
-            return True  # los comentarios nunca se bloquean, ni con el servicio finalizado
-        if view.action == 'marcar_mensajes_leidos':
-            return True
-        if view.action in ('update', 'partial_update', 'asignar_tecnico', 'responder_finalizacion'):
-            return obj.estatus != 'terminado'
-        if view.action == 'calificar':
-            return obj.estatus == 'terminado'
-        return False
-
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@throttle_classes([LoginRateThrottle])
-def login_view(request):
-    username = request.data.get('username')
-    password = request.data.get('password')
-    try:
-        user = User.objects.get(username=username)
-        if not user.is_active:
-            return Response({'error': 'Usuario inactivo.'}, status=400)
-        if not user.check_password(password):
-            raise Exception()
-        if not user.email_verificado and user.rol != 'coordinador':
-            return Response({'error': 'Debes verificar tu correo electrónico antes de iniciar sesión.', 'no_verificado': True}, status=403)
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'user': UsuarioSerializer(user).data,
-        })
-    except Exception:
-        return Response({'error': 'Credenciales incorrectas.'}, status=400)
-
-
-@api_view(['POST'])
-def logout_view(request):
-    """Invalida el refresh token en el servidor (no solo en el navegador),
-    para que un token robado o copiado deje de servir de inmediato."""
-    try:
-        refresh_token = request.data.get('refresh')
-        if refresh_token:
-            token = RefreshToken(refresh_token)
-            token.blacklist()
-    except Exception:
-        pass  # si el token ya era inválido o expiró, no pasa nada
-    return Response({'mensaje': 'Sesión cerrada.'})
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def registro_view(request):
-    serializer = RegistroSerializer(data=request.data)
-    if serializer.is_valid():
-        user = serializer.save()
-        # Crear token de verificación y generar código de 6 dígitos
-        token_obj = TokenVerificacion.objects.create(usuario=user)
-        codigo = token_obj.generar_codigo()
-        token_obj.save(update_fields=['codigo', 'intentos'])
-        # Siempre imprimir en consola para desarrollo/debug
-        print(f'\n🔑 CÓDIGO DE VERIFICACIÓN para {user.email}: {codigo}\n')
-        correo_enviado = False
-        try:
-            correo_enviado = enviar_html(
-                asunto='TallerDiesel — Código de verificación',
-                destinatarios=[user.email],
-                html_body=email_codigo_verificacion(user.nombre or user.username, codigo, MINUTOS_VALIDEZ_CODIGO),
-                text_body=(f'Hola {user.nombre or user.username},\n\n'
-                           f'Tu código de verificación es:\n\n{codigo}\n\n'
-                           f'Este código es válido por {MINUTOS_VALIDEZ_CODIGO} minutos.\n\n'
-                           f'Ingresa este código en la página de verificación para activar tu cuenta.\n\n'
-                           f'Si no creaste esta cuenta, ignora este correo.'),
-                fail_silently=False,
-            )
-        except Exception as e:
-            print(f'⚠️  Error enviando correo: {e}')
-        return Response({
-            'mensaje': f'Registro exitoso. {"Revisa tu correo " + user.email + " y escribe el código de verificación." if correo_enviado else "No se pudo enviar el correo. Usa el código que aparece en la terminal del servidor."}',
-            'email': user.email,
-            'codigo': codigo if not correo_enviado else None,
-        }, status=201)
-    return Response(serializer.errors, status=400)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@throttle_classes([CodigoRateThrottle])
-def verificar_email(request):
-    email = (request.data.get('email') or '').strip().lower()
-    codigo = (request.data.get('codigo') or '').strip()
-    if not email or not codigo:
-        return Response({'error': 'Correo y código son requeridos.'}, status=400)
-    user, ambiguo = _usuario_por_correo(email, request.data.get('username'), email_verificado=False)
-    if ambiguo:
-        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
-    try:
-        if not user:
-            raise User.DoesNotExist
-        token_obj = TokenVerificacion.objects.get(usuario=user)
-
-        if timezone.now() - token_obj.creado_en > timedelta(minutes=MINUTOS_VALIDEZ_CODIGO):
-            token_obj.delete()
-            return Response({'error': 'El código expiró. Solicita uno nuevo.', 'expirado': True}, status=400)
-
-        if token_obj.intentos >= MAX_INTENTOS_CODIGO:
-            token_obj.delete()
-            return Response({'error': 'Demasiados intentos fallidos. Solicita un nuevo código.', 'expirado': True}, status=400)
-
-        if token_obj.codigo != codigo:
-            token_obj.intentos += 1
-            token_obj.save(update_fields=['intentos'])
-            restantes = MAX_INTENTOS_CODIGO - token_obj.intentos
-            return Response({'error': f'Código incorrecto. Te quedan {restantes} intento(s).'}, status=400)
-
-        user.email_verificado = True
-        user.save(update_fields=['email_verificado'])
-        token_obj.delete()
-        return Response({'mensaje': 'Correo verificado correctamente. Ya puedes iniciar sesión.'})
-    except (User.DoesNotExist, TokenVerificacion.DoesNotExist):
-        return Response({'error': 'Código inválido o ya utilizado.'}, status=400)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@throttle_classes([CodigoRateThrottle])
-def reenviar_verificacion(request):
-    email = request.data.get('email')
-    user, ambiguo = _usuario_por_correo(email, request.data.get('username'), email_verificado=False)
-    if ambiguo:
-        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
-    try:
-        if not user:
-            raise User.DoesNotExist
-        token_obj, _ = TokenVerificacion.objects.get_or_create(usuario=user)
-        codigo = token_obj.generar_codigo()
-        token_obj.save(update_fields=['codigo', 'intentos'])
-        print(f'\n🔑 CÓDIGO DE VERIFICACIÓN (reenvío) para {user.email}: {codigo}\n')
-        correo_enviado = False
-        try:
-            correo_enviado = enviar_html(
-                asunto='TallerDiesel — Código de verificación',
-                destinatarios=[user.email],
-                html_body=email_codigo_verificacion(user.nombre or user.username, codigo, MINUTOS_VALIDEZ_CODIGO),
-                text_body=f'Hola {user.nombre or user.username},\n\nTu nuevo código de verificación es:\n\n{codigo}\n\nVálido por {MINUTOS_VALIDEZ_CODIGO} minutos.',
-                fail_silently=False,
-            )
-        except Exception as e:
-            print(f'⚠️  Error enviando correo (reenvío): {e}')
-        return Response({
-            'mensaje': f'Código reenviado. {"Revisa tu correo " + user.email + "." if correo_enviado else "No se pudo enviar el correo. Usa el código que aparece en la terminal del servidor."}',
-            'email': user.email,
-            'codigo': codigo if not correo_enviado else None,
-        })
-    except User.DoesNotExist:
-        return Response({'error': 'No se encontró usuario con ese correo o ya está verificado.'}, status=400)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@throttle_classes([CodigoRateThrottle])
-def solicitar_recuperacion(request):
-    """Olvidé mi contraseña: envía un código de 6 dígitos al correo del usuario."""
-    email = (request.data.get('email') or '').strip().lower()
-    if not email:
-        return Response({'error': 'El correo es requerido.'}, status=400)
-    user, ambiguo = _usuario_por_correo(email, request.data.get('username'))
-    if ambiguo:
-        # Correo compartido por varios coordinadores: hay que decir de cuál cuenta es el cambio
-        return Response({'mensaje': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True})
-    if not user:
-        # No revelamos si el correo existe o no, por seguridad
-        return Response({'mensaje': 'Si el correo existe, te enviamos un código de recuperación.'})
-
-    codigo_obj, _ = CodigoRecuperacion.objects.get_or_create(usuario=user)
-    codigo = codigo_obj.generar_codigo()
-    codigo_obj.save(update_fields=['codigo', 'intentos'])
-    print(f'\n🔑 CÓDIGO DE RECUPERACIÓN para {user.email}: {codigo}\n')
-    try:
-        send_mail(
-            subject='TallerDiesel — Recupera tu contraseña',
-            message=(f'Hola {user.nombre or user.username},\n\n'
-                     f'Tu código para restablecer tu contraseña es:\n\n{codigo}\n\n'
-                     f'Este código es válido por {MINUTOS_VALIDEZ_CODIGO} minutos.\n\n'
-                     f'Si no solicitaste este cambio, ignora este correo.'),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=True,
+    def test_promedio_y_total_se_actualizan_con_cada_evaluacion(self):
+        self.ticket.estatus = 'terminado'
+        self.ticket.save()
+        self.client.force_authenticate(self.cliente)
+        r = self.client.post(
+            f'/api/tickets/{self.ticket.id}/calificar/',
+            {'calificacion_tecnico': 2},
+            format='json',
         )
-    except Exception as e:
-        print(f'⚠️  Error enviando correo de recuperación: {e}')
-    return Response({'mensaje': 'Si el correo existe, te enviamos un código de recuperación.'})
+        self.assertEqual(r.status_code, 201, r.data)
 
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-@throttle_classes([CodigoRateThrottle])
-def confirmar_recuperacion(request):
-    """Verifica el código y establece la nueva contraseña."""
-    email    = (request.data.get('email') or '').strip().lower()
-    codigo   = (request.data.get('codigo') or '').strip()
-    password = request.data.get('password') or ''
-    if not email or not codigo or not password:
-        return Response({'error': 'Correo, código y nueva contraseña son requeridos.'}, status=400)
-    if len(password) < 8:
-        return Response({'error': 'La contraseña debe tener al menos 8 caracteres.'}, status=400)
-    user, ambiguo = _usuario_por_correo(email, request.data.get('username'))
-    if ambiguo:
-        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
-    try:
-        if not user:
-            raise User.DoesNotExist
-        codigo_obj = CodigoRecuperacion.objects.get(usuario=user)
-
-        if timezone.now() - codigo_obj.creado_en > timedelta(minutes=MINUTOS_VALIDEZ_CODIGO):
-            codigo_obj.delete()
-            return Response({'error': 'El código expiró. Solicita uno nuevo.', 'expirado': True}, status=400)
-
-        if codigo_obj.intentos >= MAX_INTENTOS_CODIGO:
-            codigo_obj.delete()
-            return Response({'error': 'Demasiados intentos fallidos. Solicita un nuevo código.', 'expirado': True}, status=400)
-
-        if codigo_obj.codigo != codigo:
-            codigo_obj.intentos += 1
-            codigo_obj.save(update_fields=['intentos'])
-            restantes = MAX_INTENTOS_CODIGO - codigo_obj.intentos
-            return Response({'error': f'Código incorrecto. Te quedan {restantes} intento(s).'}, status=400)
-
-        user.set_password(password)
-        user.save(update_fields=['password'])
-        codigo_obj.delete()
-        return Response({'mensaje': 'Contraseña actualizada correctamente. Ya puedes iniciar sesión.'})
-    except (User.DoesNotExist, CodigoRecuperacion.DoesNotExist):
-        return Response({'error': 'Código inválido o ya utilizado.'}, status=400)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def me_view(request):
-    return Response(UsuarioSerializer(request.user).data)
-
-
-# ── Perfil: foto y cambio de contraseña ──────────────────────────────────────
-
-MAX_FOTO_PERFIL_BYTES = 1 * 1024 * 1024   # el navegador la manda ya reducida (~30 KB); 1 MB es un tope de seguridad
-
-
-def _tipo_imagen(datos):
-    """Tipo real de la imagen por sus primeros bytes (no por el nombre ni lo que diga el cliente)."""
-    if datos[:3] == b'\xff\xd8\xff':
-        return 'image/jpeg'
-    if datos[:8] == b'\x89PNG\r\n\x1a\n':
-        return 'image/png'
-    if datos[:4] == b'RIFF' and datos[8:12] == b'WEBP':
-        return 'image/webp'
-    return None
-
-
-@api_view(['POST', 'DELETE'])
-@permission_classes([IsAuthenticated])
-def mi_foto(request):
-    """POST (multipart, campo `foto`): sube o reemplaza mi foto. DELETE: la quita.
-    Devuelve el usuario actualizado."""
-    if request.method == 'DELETE':
-        FotoPerfil.objects.filter(usuario=request.user).delete()
-        return Response(UsuarioSerializer(request.user).data)
-
-    archivo = request.FILES.get('foto')
-    if not archivo:
-        return Response({'error': 'Selecciona una foto.'}, status=400)
-    if archivo.size > MAX_FOTO_PERFIL_BYTES:
-        return Response({'error': 'La foto es demasiado pesada. Elige una más pequeña.'}, status=400)
-    datos = archivo.read()
-    tipo = _tipo_imagen(datos)
-    if not tipo:
-        return Response({'error': 'Formato no permitido. Usa JPG, PNG o WEBP.'}, status=400)
-    FotoPerfil.objects.update_or_create(usuario=request.user, defaults={'contenido': datos, 'tipo': tipo})
-    return Response(UsuarioSerializer(request.user).data)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-@throttle_classes([CambioPasswordThrottle])
-def cambiar_password(request):
-    """Cambia MI contraseña pidiendo la actual. Cierra las demás sesiones de la cuenta
-    (invalida sus tokens de renovación) y devuelve tokens nuevos para esta sesión."""
-    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
-    user = request.user
-    actual = request.data.get('password_actual') or ''
-    nueva = request.data.get('password_nueva') or ''
-    confirmar = request.data.get('confirmar_password')
-    if not user.check_password(actual):
-        return Response({'error': 'La contraseña actual es incorrecta.'}, status=400)
-    if len(nueva) < 8:
-        return Response({'error': 'La nueva contraseña debe tener al menos 8 caracteres.'}, status=400)
-    if confirmar is not None and nueva != confirmar:
-        return Response({'error': 'Las contraseñas nuevas no coinciden.'}, status=400)
-    if user.check_password(nueva):
-        return Response({'error': 'La nueva contraseña debe ser distinta a la actual.'}, status=400)
-    user.set_password(nueva)
-    user.save(update_fields=['password'])
-    for t in OutstandingToken.objects.filter(user=user):
-        BlacklistedToken.objects.get_or_create(token=t)
-    refresh = RefreshToken.for_user(user)
-    return Response({'mensaje': 'Contraseña actualizada. Se cerró tu sesión en otros dispositivos.',
-                     'access': str(refresh.access_token), 'refresh': str(refresh)})
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def tour_completado_view(request):
-    """Marca que el usuario ya vio (o omitió) el recorrido guiado de bienvenida."""
-    request.user.tour_completado = True
-    request.user.save(update_fields=['tour_completado'])
-    return Response({'tour_completado': True})
-
-
-# ── Usuarios ──────────────────────────────────────────────────────────────────
-
-class UsuarioViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all().order_by('-fecha_registro')
-    serializer_class = UsuarioSerializer
-    permission_classes = [EsAdminOPermisoEdicion]
-
-    def get_queryset(self):
-        # foto_actualizada trae solo la fecha de la foto (no la imagen) para marcar quién tiene foto
-        qs = super().get_queryset().annotate(foto_actualizada=F('foto_perfil__actualizada'))
-        if self.request.user.rol == 'cliente':
-            qs = qs.filter(id=self.request.user.id)
-        rol = self.request.query_params.get('rol')
-        if rol:
-            qs = qs.filter(rol=rol)
-        return qs
-
-    @action(detail=True, methods=['get'])
-    def foto(self, request, pk=None):
-        """Foto de perfil. Requiere sesión (por eso el frontend la pide con el token, como las evidencias).
-        Los clientes solo pueden ver la suya; el personal (coordinador/admin) ve la de todos."""
-        usuario = self.get_object()
-        foto = FotoPerfil.objects.filter(usuario=usuario).first()
-        if not foto:
-            raise Http404
-        resp = HttpResponse(bytes(foto.contenido), content_type=foto.tipo)
-        resp['Cache-Control'] = 'private, max-age=86400'   # la URL lleva ?v=<versión>, así que se renueva sola
-        resp['X-Content-Type-Options'] = 'nosniff'
-        return resp
-
-    def _bloquear_permiso_si_no_admin(self, request):
-        # Solo el Administrador puede otorgar/revocar el permiso de edición
-        # de un Coordinador. Un Coordinador con ese permiso no puede
-        # otorgárselo a otros ni a sí mismo.
-        if 'puede_editar_sistema' in request.data and request.user.rol != 'admin':
-            request.data.pop('puede_editar_sistema')
-
-    def create(self, request, *args, **kwargs):
-        if request.user.rol != 'admin' and request.data.get('rol') == 'admin':
-            return Response({'error': 'Solo el Administrador puede crear cuentas de Administrador.'}, status=403)
-        self._bloquear_permiso_si_no_admin(request)
-        return super().create(request, *args, **kwargs)
-
-    def update(self, request, *args, **kwargs):
-        objetivo = self.get_object()
-        if request.user.rol != 'admin' and objetivo.rol == 'admin':
-            return Response({'error': 'No puedes modificar una cuenta de Administrador.'}, status=403)
-        if request.user.rol != 'admin' and request.data.get('rol') == 'admin':
-            return Response({'error': 'Solo el Administrador puede asignar el rol de Administrador.'}, status=403)
-        self._bloquear_permiso_si_no_admin(request)
-        return super().update(request, *args, **kwargs)
-
-    def partial_update(self, request, *args, **kwargs):
-        objetivo = self.get_object()
-        if request.user.rol != 'admin' and objetivo.rol == 'admin':
-            return Response({'error': 'No puedes modificar una cuenta de Administrador.'}, status=403)
-        if request.user.rol != 'admin' and request.data.get('rol') == 'admin':
-            return Response({'error': 'Solo el Administrador puede asignar el rol de Administrador.'}, status=403)
-        self._bloquear_permiso_si_no_admin(request)
-        return super().partial_update(request, *args, **kwargs)
-
-    def destroy(self, request, *args, **kwargs):
-        objetivo = self.get_object()
-        if request.user.rol != 'admin' and objetivo.rol == 'admin':
-            return Response({'error': 'No puedes eliminar una cuenta de Administrador.'}, status=403)
-        return super().destroy(request, *args, **kwargs)
-
-    @action(detail=False, methods=['get'])
-    def coordinadores(self, request):
-        # Admin ve coordinadores + admins; coordinador solo se ve a sí mismo
-        if request.user.rol == 'admin':
-            qs = User.objects.filter(rol__in=['coordinador', 'admin'], is_active=True)
-        else:
-            qs = User.objects.filter(rol='coordinador', is_active=True)
-        return Response(UsuarioSerializer(qs, many=True).data)
-
-
-# ── Tickets ───────────────────────────────────────────────────────────────────
-
-def solicitar_calificacion(ticket):
-    """Se llama cuando un ticket pasa a "Finalizado": guarda la fecha de cierre y le
-    avisa al cliente (campana) para que califique al técnico y al servicio."""
-    ticket.fecha_finalizacion = timezone.now()
-    ticket.save(update_fields=['fecha_finalizacion'])
-    if not ticket.cliente_id or Opinion.objects.filter(ticket=ticket).exists():
-        return
-    # Si el ticket se reabre y se vuelve a finalizar, no se duplica el aviso pendiente.
-    if Notificacion.objects.filter(destinatario=ticket.cliente, tipo='calificar_servicio',
-                                   referencia_id=ticket.id, leida=False).exists():
-        return
-    quien = f' y a {ticket.tecnico.nombre}' if ticket.tecnico_id else ''
-    Notificacion.objects.create(
-        destinatario=ticket.cliente,
-        titulo=f'⭐ Califica tu servicio {ticket.etiqueta}',
-        mensaje=f'Tu servicio fue finalizado. Cuéntanos qué tal estuvo: califica el servicio{quien} con estrellas.',
-        tipo='calificar_servicio', referencia_id=ticket.id,
-    )
-
-
-def al_finalizar(ticket):
-    """Todo lo que pasa cuando un servicio queda finalizado: se pide la calificación al cliente y el
-    coordinador recibe automáticamente el siguiente ticket en espera."""
-    solicitar_calificacion(ticket)
-    asignar_siguiente_en_espera(ticket.coordinador)
-
-
-class TicketViewSet(viewsets.ModelViewSet):
-    queryset = Ticket.objects.all()
-    serializer_class = TicketSerializer
-    permission_classes = [PuedeEditarTicket]
-
-    def get_queryset(self):
-        from django.db.models import Q
-        qs = _con_mensajes_no_leidos(
-            super().get_queryset().prefetch_related('opinion'),
-            self.request.user,
+        segundo_ticket = Ticket.objects.create(
+            empresa='ACME', fecha=date.today(), unidad='U2',
+            cliente=self.otro, coordinador=self.coord, tecnico=self.tec, estatus='terminado',
         )
-        # Por default no se muestran los tickets en la papelera, salvo que se pida explícitamente
-        # con ?eliminados=1 (usado por la acción "papelera" de abajo).
-        if self.request.query_params.get('eliminados') == '1':
-            qs = qs.filter(eliminado=True)
-        else:
-            qs = qs.filter(eliminado=False)
-        user = self.request.user
-        if user.rol == 'cliente':
-            qs = qs.filter(cliente=user)
-        # El coordinador ve TODOS los tickets (los de otros coordinadores en modo lectura); solo edita los suyos.
-        estatus = self.request.query_params.get('estatus')
-        if estatus:
-            qs = qs.filter(estatus=estatus)
-        return qs
-
-    def perform_destroy(self, instance):
-        """No se borra el registro de verdad — se manda a la papelera, para
-        poder consultarlo después y para que su folio (TDxxx) quede libre y
-        el siguiente ticket nuevo lo reutilice."""
-        from django.utils import timezone
-        instance.eliminado = True
-        instance.eliminado_en = timezone.now()
-        instance.eliminado_por = self.request.user
-        instance.save()
-
-    @action(detail=False, methods=['get'])
-    def papelera(self, request):
-        """Lista de tickets eliminados (solo Admin y Coordinador)."""
-        if request.user.rol not in ('admin', 'coordinador'):
-            return Response({'error': 'No tienes permiso para ver la papelera.'}, status=403)
-        qs = Ticket.objects.filter(eliminado=True).order_by('-eliminado_en')
-        return Response(TicketSerializer(qs, many=True, context={'request': request}).data)
-
-    @action(detail=True, methods=['post'])
-    def restaurar(self, request, pk=None):
-        """Regresa un ticket eliminado a la lista activa (solo Admin y Coordinador)."""
-        if request.user.rol not in ('admin', 'coordinador'):
-            return Response({'error': 'No tienes permiso para restaurar tickets.'}, status=403)
-        ticket = get_object_or_404(Ticket, pk=pk, eliminado=True)
-        # Si mientras estuvo en la papelera ya se reutilizó su folio en un ticket nuevo,
-        # se le agrega un sufijo para no romper el folio único entre los activos.
-        if ticket.ticket_id and Ticket.objects.filter(ticket_id=ticket.ticket_id, eliminado=False).exclude(pk=ticket.pk).exists():
-            ticket.ticket_id = f'{ticket.ticket_id}-R'
-        ticket.eliminado = False
-        ticket.eliminado_en = None
-        ticket.eliminado_por = None
-        ticket.save()
-        return Response(TicketSerializer(ticket, context={'request': request}).data)
-
-    def perform_update(self, serializer):
-        # Un coordinador nunca reasigna el ticket a otro desde el formulario: se queda con él (o con el suyo).
-        if self.request.user.rol == 'coordinador':
-            serializer.save(coordinador=self.request.user)
-        else:
-            serializer.save()
-
-    def update(self, request, *args, **kwargs):
-        ticket = self.get_object()
-
-        # Ticket sin coordinador: el primero que lo edita lo toma (queda con folio consecutivo).
-        # Si otro coordinador lo tomó en ese instante, ya no es editable.
-        if request.user.rol == 'coordinador' and ticket.coordinador_id is None:
-            if not reclamar_ticket(ticket, request.user):
-                return Response({'error': 'Otro coordinador ya tomó este ticket.'}, status=409)
-            ticket = self.get_object()
-
-        # El cliente solo puede modificar unidad, tipo de unidad y descripción
-        if request.user.rol == 'cliente':
-            campos_permitidos = {'unidad', 'tipo_unidad', 'reparacion'}
-            data = request.data
-            if hasattr(data, 'dict'):
-                data = data.dict()
-            campos_no_permitidos = set(data.keys()) - campos_permitidos
-            if campos_no_permitidos:
-                return Response(
-                    {'error': f'Solo puedes editar unidad, tipo de unidad y descripción. Campos no permitidos: {", ".join(campos_no_permitidos)}.'},
-                    status=403)
-            kwargs['partial'] = True
-
-        # El Coordinador no cierra el servicio por su cuenta: lo solicita y el Cliente decide.
-        if (request.user.rol == 'coordinador' and ticket.cliente_id
-                and request.data.get('estatus') == 'terminado' and ticket.estatus != 'terminado'):
-            return Response(
-                {'error': 'Para finalizar el servicio usa "Solicitar finalización": el cliente debe confirmarla.'},
-                status=403)
-
-        estatus_anterior = ticket.estatus
-        tecnico_anterior_id = ticket.tecnico_id
-        tipo_solicitud_anterior = ticket.tipo_solicitud
-        coordinador_anterior_id = ticket.coordinador_id
-        response = super().update(request, *args, **kwargs)
-        ticket.refresh_from_db()
-
-        # Registrar cambio de estatus en bitácora
-        if ticket.estatus != estatus_anterior:
-            label_anterior = dict(Ticket.ESTATUS_CHOICES).get(estatus_anterior, estatus_anterior)
-            ComentarioTicket.objects.create(
-                ticket=ticket,
-                autor=request.user,
-                autor_nombre=request.user.nombre_completo,
-                texto=f'Estatus cambiado de "{label_anterior}" a "{ticket.get_estatus_display()}"',
-                es_cambio_estatus=True,
-                estatus_anterior=estatus_anterior,
-                estatus_nuevo=ticket.estatus,
-            )
-            # Notificar al cliente que su ticket cambió de estatus
-            if ticket.cliente_id:
-                Notificacion.objects.create(
-                    destinatario=ticket.cliente,
-                    titulo=f'Tu servicio {ticket.etiqueta} fue actualizado',
-                    mensaje=f'El estatus cambió de "{label_anterior}" a "{ticket.get_estatus_display()}".',
-                    tipo='cambio_estatus',
-                    referencia_id=ticket.id,
-                )
-            # Notificar al coordinador asignado (si no es él quien hizo el cambio)
-            if ticket.coordinador_id and ticket.coordinador_id != request.user.id:
-                Notificacion.objects.create(
-                    destinatario=ticket.coordinador,
-                    titulo=f'Ticket {ticket.etiqueta} actualizado',
-                    mensaje=f'Estatus cambiado a "{ticket.get_estatus_display()}" por {request.user.nombre_completo}.',
-                    tipo='cambio_estatus',
-                    referencia_id=ticket.id,
-                )
-            # Al finalizar: se le pide al cliente calificar y el coordinador recibe el siguiente en espera
-            if ticket.estatus == 'terminado':
-                al_finalizar(ticket)
-                # Conserva los avisos del ticket en la base de datos, pero sácalos de la bandeja activa.
-                # La invitación a calificar permanece activa hasta que el cliente la atienda.
-                Notificacion.objects.filter(referencia_id=ticket.id).exclude(
-                    tipo='calificar_servicio', leida=False,
-                ).update(archivada=True)
-
-        # Registrar asignación de técnico en bitácora
-        if ticket.tecnico_id and ticket.tecnico_id != tecnico_anterior_id:
-            ComentarioTicket.objects.create(
-                ticket=ticket,
-                autor=request.user,
-                autor_nombre=request.user.nombre_completo,
-                texto=f'Técnico asignado: {ticket.tecnico.nombre}',
-            )
-
-        # Si el ticket era "directo con técnico" y, al editarlo, quedó con coordinador
-        # (por el formulario general de Bitácora, no solo por el botón dedicado),
-        # se avisa al cliente igual que en "Tomar como coordinador".
-        tomo_coordinador_por_edicion = (
-            tipo_solicitud_anterior == 'tecnico' and ticket.tipo_solicitud == 'coordinador'
-            and ticket.coordinador_id and ticket.coordinador_id != coordinador_anterior_id
+        self.client.force_authenticate(self.otro)
+        r = self.client.post(
+            f'/api/tickets/{segundo_ticket.id}/calificar/',
+            {'calificacion_tecnico': 4},
+            format='json',
         )
-        if tomo_coordinador_por_edicion and ticket.cliente_id:
-            Notificacion.objects.create(
-                destinatario=ticket.cliente,
-                titulo='Un coordinador tomó tu servicio',
-                mensaje=f'{ticket.coordinador.nombre_completo} ahora coordina tu ticket {ticket.etiqueta}.',
-                tipo='coordinador_asignado', referencia_id=ticket.id,
-            )
-            if ticket.cliente.email:
-                try:
-                    url = f'{settings.FRONTEND_URL}/cliente/dashboard'
-                    _enviar_html_en_segundo_plano(
-                        asunto=f'🧑‍💼 Un coordinador tomó tu servicio — {ticket.etiqueta}',
-                        destinatarios=[ticket.cliente.email],
-                        html_body=email_nuevo_comentario(ticket.coordinador.nombre_completo, 'coordinador', ticket.etiqueta,
-                                                          f'{ticket.coordinador.nombre_completo} tomó tu servicio y ahora le da seguimiento personal.', url),
-                        text_body=f'{ticket.coordinador.nombre_completo} tomó tu servicio {ticket.etiqueta} y ahora le da seguimiento. Ingresa al sistema: {url}',
-                    )
-                except Exception as e:
-                    print(f'⚠️  Error enviando correo de coordinador asignado (edición): {e}')
+        self.assertEqual(r.status_code, 201, r.data)
 
-        return response
+        self.tec.refresh_from_db()
+        self.assertEqual(self.tec.calificacion, 3)
 
-    @action(detail=True, methods=['post'])
-    def asignar_tecnico(self, request, pk=None):
-        """El Coordinador o el Administrador asignan un técnico al ticket.
-        El propio Cliente también puede fijarlo, pero solo en su propio ticket,
-        recién creado y sin técnico todavía (elección hecha en el mapa).
-        Al asignarlo, si el ticket estaba 'Pendiente' pasa automáticamente
-        a 'Atendido'."""
-        ticket = self.get_object()
-        es_staff = request.user.rol in ('admin', 'coordinador')
-        # Un coordinador que asigna técnico a un ticket libre se queda con él (se le genera su folio).
-        if request.user.rol == 'coordinador' and ticket.coordinador_id is None:
-            if not reclamar_ticket(ticket, request.user):
-                return Response({'error': 'Otro coordinador ya tomó este ticket.'}, status=409)
-            ticket = self.get_object()
-        # El cliente puede elegir o CAMBIAR el técnico de su propio ticket, siempre que
-        # sea un servicio directo con técnico (no uno atendido por coordinador) y no
-        # esté ya finalizado.
-        es_cliente_dueño_tecnico_directo = (
-            request.user.rol == 'cliente'
-            and ticket.cliente_id == request.user.id
-            and ticket.tipo_solicitud == 'tecnico'
-            and ticket.estatus != 'terminado'
+        response = self.client.get('/api/tecnicos/')
+        tecnicos = response.data.get('results', response.data) if isinstance(response.data, dict) else response.data
+        datos_tecnico = next(t for t in tecnicos if t['id'] == self.tec.id)
+        self.assertEqual(float(datos_tecnico['calificacion_promedio']), 3)
+        self.assertEqual(datos_tecnico['total_calificaciones'], 2)
+
+        sin_votos = Tecnico.objects.create(
+            nombre='Sin votos', categoria='motor_diesel', ciudad='X', estado='Y',
+            telefono='2', latitud=1, longitud=1,
         )
-        if not (es_staff or es_cliente_dueño_tecnico_directo):
-            return Response({'error': 'No tienes permiso para asignar técnicos.'}, status=403)
-        ticket = self.get_object()
-        tecnico_id = request.data.get('tecnico_id') or request.data.get('tecnico')
-        if not tecnico_id:
-            return Response({'error': 'tecnico_id es requerido.'}, status=400)
-        try:
-            tecnico = Tecnico.objects.get(pk=tecnico_id)
-        except Tecnico.DoesNotExist:
-            return Response({'error': 'Técnico no encontrado.'}, status=404)
+        response = self.client.get('/api/tecnicos/')
+        tecnicos = response.data.get('results', response.data) if isinstance(response.data, dict) else response.data
+        datos_sin_votos = next(t for t in tecnicos if t['id'] == sin_votos.id)
+        self.assertIsNone(datos_sin_votos['calificacion_promedio'])
+        self.assertEqual(datos_sin_votos['total_calificaciones'], 0)
 
-        tecnico_anterior = ticket.tecnico
-        tecnico_anterior_id = ticket.tecnico_id
-        es_cambio = tecnico_anterior_id is not None and tecnico_anterior_id != tecnico.id
-        ticket.tecnico = tecnico
-        estatus_anterior = ticket.estatus
-        if ticket.estatus == 'pendiente':
-            ticket.estatus = 'atendido'
-        # Geolocalización: el coordinador puede fijar en el mapa dónde está el servicio
-        if request.data.get('latitud') not in (None, '') or request.data.get('longitud') not in (None, ''):
-            coord = coordenada_valida(request.data.get('latitud'), request.data.get('longitud'))
-            if not coord:
-                return Response({'error': 'La ubicación no es válida.'}, status=400)
-            ticket.latitud, ticket.longitud = coord
-        ticket.save()
+    def test_opinion_directa_rechaza_estrellas_fuera_de_rango_y_actualiza_promedio(self):
+        url = f'/api/tecnicos/{self.tec.id}/agregar_opinion/'
+        respuesta = self.client.post(url, {'nombre_autor': 'Cliente', 'calificacion': 6}, format='json')
+        self.assertEqual(respuesta.status_code, 400)
+        respuesta = self.client.post(
+            url,
+            {'nombre_autor': 'Cliente', 'calificacion': 4, 'comentario': 'Buen servicio'},
+            format='json',
+        )
+        self.assertEqual(respuesta.status_code, 201, respuesta.data)
+        self.tec.refresh_from_db()
+        self.assertEqual(self.tec.calificacion, 4)
 
+    def test_no_se_califica_si_no_esta_finalizado_ni_ajeno_ni_staff(self):
+        url = f'/api/tickets/{self.ticket.id}/calificar/'
+        body = {'calificacion_tecnico': 5}
+        self.client.force_authenticate(self.cliente)
+        self.assertEqual(self.client.post(url, body, format='json').status_code, 403)  # no finalizado (permiso)
+        self.ticket.estatus = 'terminado'; self.ticket.save()
+        self.client.force_authenticate(self.otro)
+        self.assertEqual(self.client.post(url, body, format='json').status_code, 404)  # ticket de otro cliente
+        self.client.force_authenticate(self.coord)
+        self.assertEqual(self.client.post(url, body, format='json').status_code, 403)  # staff no califica
+
+    def test_sin_tecnico_no_se_puede_calificar(self):
+        self.ticket.tecnico = None; self.ticket.estatus = 'terminado'; self.ticket.save()
+        self.client.force_authenticate(self.cliente)
+        r = self.client.post(f'/api/tickets/{self.ticket.id}/calificar/',
+                             {'comentario': ' Excelente '}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse(Opinion.objects.filter(ticket=self.ticket).exists())
+        self.assertFalse(self.client.get(f'/api/tickets/{self.ticket.id}/').data['puede_calificar'])
+
+    def test_tickets_viejos_sin_fecha_de_cierre_no_estorban(self):
+        self.ticket.estatus = 'terminado'; self.ticket.save()  # finalizado antes de esta función
+        self.client.force_authenticate(self.cliente)
+        self.assertEqual(self.client.get('/api/tickets/pendientes_calificar/').data, [])
+
+    def test_alertas_de_mensajes_siguen_con_servicio_finalizado(self):
+        self.ticket.estatus = 'terminado'; self.ticket.save()
+        self.client.force_authenticate(self.coord)
+        self.client.post(f'/api/tickets/{self.ticket.id}/agregar_comentario/', {'texto': 'Hola'}, format='json')
+        self.assertEqual(Notificacion.objects.filter(destinatario=self.cliente, tipo='comentario').count(), 1)
+        self.client.force_authenticate(self.cliente)
+        self.client.post(f'/api/tickets/{self.ticket.id}/agregar_comentario/', {'texto': 'Gracias'}, format='json')
+        self.assertEqual(Notificacion.objects.filter(destinatario=self.coord, tipo='comentario').count(), 1)
+
+
+class DashboardsTests(APITestCase):
+    """Un servicio recién solicitado (sin coordinador) debe verse ya en los dashboards."""
+
+    def setUp(self):
+        mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u, email_verificado=True)
+        self.coord = mk('coord', 'coordinador')
+        self.otro_coord = mk('coord2', 'coordinador')
+        self.admin = mk('adm', 'admin')
+
+    def _ticket(self, **kw):
+        return Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1', estatus='pendiente', **kw)
+
+    def test_coordinador_ve_sin_asignar_y_propios_pero_no_ajenos_ni_eliminados(self):
+        nuevo = self._ticket()                                   # recién solicitado, sin coordinador
+        mio = self._ticket(coordinador=self.coord)
+        self._ticket(coordinador=self.otro_coord)                # de otro coordinador
+        self._ticket(eliminado=True)                             # en la papelera
+        self.client.force_authenticate(self.coord)
+        d = self.client.get('/api/tickets/dashboard_coordinador/').data
+        self.assertEqual(sorted(t['id'] for t in d['tickets']), sorted([nuevo.id, mio.id]))
+        self.assertEqual(d['pendientes'], 2)
+
+    def test_admin_cuenta_el_servicio_nuevo_y_no_los_eliminados(self):
+        self._ticket(); self._ticket(eliminado=True)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.get('/api/tickets/dashboard_admin/').data['pendientes'], 1)
+
+
+class CorreoCompartidoTests(APITestCase):
+    """Un correo se puede repetir entre COORDINADORES, y solo si lo da de alta el Administrador."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()   # los límites de peticiones usan caché
+        mk = lambda u, rol, email=None, **kw: User.objects.create_user(
+            u, email or f'{u}@x.com', 'pass12345', rol=rol, nombre=u, email_verificado=True, **kw)
+        self.admin = mk('adm', 'admin')
+        self.coord_permiso = mk('coordp', 'coordinador', puede_editar_sistema=True)
+        self.cliente = mk('cli', 'cliente', 'cli@x.com')
+
+    def _alta(self, quien, username, email, rol='coordinador'):
+        self.client.force_authenticate(quien)
+        return self.client.post('/api/usuarios/', {
+            'username': username, 'email': email, 'rol': rol, 'nombre': username, 'password': 'pass12345'}, format='json')
+
+    def test_admin_puede_repetir_el_correo_de_un_coordinador_las_veces_que_quiera(self):
+        for i in range(4):
+            r = self._alta(self.admin, f'coord{i}', 'coordinacion@taller.com')
+            self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(User.objects.filter(email='coordinacion@taller.com').count(), 4)
+        # Todas quedan listas para entrar (los coordinadores no verifican correo)
+        self.assertFalse(User.objects.filter(email='coordinacion@taller.com', email_verificado=False).exists())
+        # También sin distinguir mayúsculas
+        self.assertEqual(self._alta(self.admin, 'coord9', 'Coordinacion@Taller.com').status_code, 201)
+
+    def test_un_coordinador_con_permiso_de_edicion_NO_puede_repetir_correo(self):
+        self.assertEqual(self._alta(self.admin, 'coordA', 'coordinacion@taller.com').status_code, 201)
+        r = self._alta(self.coord_permiso, 'coordB', 'coordinacion@taller.com')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('Solo el Administrador', str(r.data['email']))
+        self.assertFalse(User.objects.filter(username='coordB').exists())
+
+    def test_correos_de_cliente_o_admin_nunca_se_comparten(self):
+        # coordinador con el correo de un cliente
+        self.assertEqual(self._alta(self.admin, 'c1', 'cli@x.com').status_code, 400)
+        # cliente / admin / coordinador nuevo con el correo de un coordinador
+        self._alta(self.admin, 'coordA', 'coordinacion@taller.com')
+        self.assertEqual(self._alta(self.admin, 'k1', 'coordinacion@taller.com', rol='cliente').status_code, 400)
+        self.assertEqual(self._alta(self.admin, 'a1', 'coordinacion@taller.com', rol='admin').status_code, 400)
+        # cliente repetido sigue prohibido
+        self.assertEqual(self._alta(self.admin, 'k2', 'cli@x.com', rol='cliente').status_code, 400)
+
+    def test_el_registro_publico_no_puede_usar_un_correo_ya_registrado(self):
+        self._alta(self.admin, 'coordA', 'coordinacion@taller.com')
+        self.client.force_authenticate(None)
+        body = lambda e: {'username': 'nuevo', 'email': e, 'nombre': 'N', 'apellido_paterno': 'P', 'password': 'pass12345',
+                          'confirmar_password': 'pass12345', 'aceptar_aviso_privacidad': True}
+        self.assertEqual(self.client.post('/api/auth/registro/', body('coordinacion@taller.com'), format='json').status_code, 400)
+        self.assertEqual(self.client.post('/api/auth/registro/', body('cli@x.com'), format='json').status_code, 400)
+        self.assertEqual(self.client.post('/api/auth/registro/', body('libre@x.com'), format='json').status_code, 201)
+
+    def test_editar_a_un_coordinador_que_ya_comparte_correo_no_estorba(self):
+        self._alta(self.admin, 'coordA', 'coordinacion@taller.com')
+        self._alta(self.admin, 'coordB', 'coordinacion@taller.com')
+        b = User.objects.get(username='coordB')
+        # coordinador con permiso cambia solo el puesto/nombre (el correo no cambia) → permitido
+        self.client.force_authenticate(self.coord_permiso)
+        r = self.client.patch(f'/api/usuarios/{b.id}/', {'email': 'coordinacion@taller.com', 'puesto': 'Norte'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        # pero NO puede cambiarle el correo a otro ya usado por coordinadores
+        r = self.client.patch(f'/api/usuarios/{b.id}/', {'email': 'cli@x.com'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_base_de_datos_refuerza_la_regla_para_no_coordinadores(self):
+        from django.db import IntegrityError, transaction
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            User.objects.create_user('otro', 'cli@x.com', 'pass12345', rol='cliente')
+
+    def test_recuperar_contrasena_con_correo_compartido_pide_usuario_y_solo_cambia_esa_cuenta(self):
+        from .models import CodigoRecuperacion
+        self._alta(self.admin, 'coordA', 'coordinacion@taller.com')
+        self._alta(self.admin, 'coordB', 'coordinacion@taller.com')
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/recuperar/', {'email': 'coordinacion@taller.com'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data.get('requiere_usuario'))
+        self.assertFalse(CodigoRecuperacion.objects.exists())      # no se manda código a ciegas
+        r = self.client.post('/api/auth/recuperar/', {'email': 'coordinacion@taller.com', 'username': 'coordB'}, format='json')
+        self.assertFalse(r.data.get('requiere_usuario'))
+        codigo = CodigoRecuperacion.objects.get().codigo
+        self.assertEqual(CodigoRecuperacion.objects.get().usuario.username, 'coordB')
+        # sin usuario no deja confirmar; con usuario cambia únicamente a coordB
+        r = self.client.post('/api/auth/recuperar/confirmar/', {'email': 'coordinacion@taller.com', 'codigo': codigo, 'password': 'nuevaClave123'}, format='json')
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post('/api/auth/recuperar/confirmar/', {'email': 'coordinacion@taller.com', 'username': 'coordB', 'codigo': codigo, 'password': 'nuevaClave123'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(User.objects.get(username='coordB').check_password('nuevaClave123'))
+        self.assertTrue(User.objects.get(username='coordA').check_password('pass12345'))
+
+    def test_correo_unico_sigue_funcionando_igual_sin_pedir_usuario(self):
+        from .models import CodigoRecuperacion
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/recuperar/', {'email': 'cli@x.com'}, format='json')
+        self.assertFalse(r.data.get('requiere_usuario'))
+        self.assertEqual(CodigoRecuperacion.objects.get().usuario, self.cliente)
+        # correo inexistente: misma respuesta genérica, sin pistas
+        r = self.client.post('/api/auth/recuperar/', {'email': 'nadie@x.com'}, format='json')
+        self.assertEqual(r.status_code, 200)
+
+    def test_verificar_y_reenviar_con_varias_cuentas_sin_verificar_no_dan_error_500(self):
+        for u in ('v1', 'v2'):
+            User.objects.create_user(u, 'compartido@x.com', 'pass12345', rol='coordinador')
+        # (los coordinadores se verifican solos; se simula una fila antigua sin verificar saltando save())
+        User.objects.filter(email='compartido@x.com').update(email_verificado=False)
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/reenviar-verificacion/', {'email': 'compartido@x.com'}, format='json')
+        self.assertEqual(r.status_code, 400); self.assertTrue(r.data.get('requiere_usuario'))
+        r = self.client.post('/api/auth/verificar/', {'email': 'compartido@x.com', 'codigo': '123456'}, format='json')
+        self.assertEqual(r.status_code, 400); self.assertTrue(r.data.get('requiere_usuario'))
+        r = self.client.post('/api/auth/reenviar-verificacion/', {'email': 'compartido@x.com', 'username': 'v2'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_cada_cuenta_inicia_sesion_con_su_propio_usuario(self):
+        self._alta(self.admin, 'coordA', 'coordinacion@taller.com')
+        self._alta(self.admin, 'coordB', 'coordinacion@taller.com')
+        self.client.force_authenticate(None)
+        for u in ('coordA', 'coordB'):
+            r = self.client.post('/api/auth/login/', {'username': u, 'password': 'pass12345'}, format='json')
+            self.assertEqual(r.status_code, 200, (u, r.data))
+            self.assertEqual(r.data['user']['username'], u)
+
+
+class PerfilTests(APITestCase):
+    """Foto de perfil y cambio de contraseña."""
+
+    JPEG = b'\xff\xd8\xff\xe0' + b'\x00' * 200
+    PNG = b'\x89PNG\r\n\x1a\n' + b'\x00' * 200
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u, email_verificado=True)
+        self.carlo = mk('carlo', 'coordinador')
+        self.karen = mk('karen', 'coordinador')
+        self.cli = mk('cli', 'cliente')
+
+    def _subir(self, quien, datos, nombre='foto.jpg', tipo='image/jpeg'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        self.client.force_authenticate(quien)
+        return self.client.post('/api/auth/foto/', {'foto': SimpleUploadedFile(nombre, datos, content_type=tipo)}, format='multipart')
+
+    # ── foto ──
+    def test_subir_foto_y_verla(self):
+        r = self._subir(self.carlo, self.JPEG)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNotNone(r.data['foto_version'])
+        self.assertNotIn('contenido', r.data)
+        f = self.client.get(f'/api/usuarios/{self.carlo.id}/foto/')
+        self.assertEqual(f.status_code, 200)
+        self.assertEqual(f['Content-Type'], 'image/jpeg')
+        self.assertEqual(f['X-Content-Type-Options'], 'nosniff')
+        self.assertEqual(f.content, self.JPEG)
+        # /auth/me/ ya trae la versión de la foto
+        self.assertIsNotNone(self.client.get('/api/auth/me/').data['foto_version'])
+
+    def test_reemplazar_deja_una_sola_foto_y_cambia_la_version(self):
+        from .models import FotoPerfil
+        self._subir(self.carlo, self.JPEG)
+        FotoPerfil.objects.filter(usuario=self.carlo).update(actualizada='2020-01-01T00:00:00Z')
+        v1 = self.client.get('/api/auth/me/').data['foto_version']
+        r = self._subir(self.carlo, self.PNG, 'f.png', 'image/png')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(FotoPerfil.objects.filter(usuario=self.carlo).count(), 1)
+        self.assertGreater(r.data['foto_version'], v1)
+        self.assertEqual(self.client.get(f'/api/usuarios/{self.carlo.id}/foto/')['Content-Type'], 'image/png')
+
+    def test_validaciones_de_la_foto(self):
+        # texto disfrazado de .jpg
+        self.assertEqual(self._subir(self.carlo, b'<script>alert(1)</script>', 'x.jpg').status_code, 400)
+        # demasiado pesada
+        self.assertEqual(self._subir(self.carlo, self.JPEG + b'\x00' * (1024 * 1024)).status_code, 400)
+        # sin archivo
+        self.client.force_authenticate(self.carlo)
+        self.assertEqual(self.client.post('/api/auth/foto/', {}, format='multipart').status_code, 400)
+        # sin sesión
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post('/api/auth/foto/', {}, format='multipart').status_code, 401)
+        from .models import FotoPerfil
+        self.assertFalse(FotoPerfil.objects.exists())   # ningún intento inválido guardó nada
+
+    def test_quitar_foto(self):
+        self._subir(self.carlo, self.JPEG)
+        r = self.client.delete('/api/auth/foto/')
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.data['foto_version'])
+        self.assertEqual(self.client.get(f'/api/usuarios/{self.carlo.id}/foto/').status_code, 404)
+
+    def test_quien_puede_ver_cada_foto(self):
+        self._subir(self.carlo, self.JPEG)
+        self.client.force_authenticate(self.karen)                                     # otro coordinador: sí
+        self.assertEqual(self.client.get(f'/api/usuarios/{self.carlo.id}/foto/').status_code, 200)
+        self.client.force_authenticate(self.cli)                                       # cliente: no (ni sabe que existe)
+        self.assertEqual(self.client.get(f'/api/usuarios/{self.carlo.id}/foto/').status_code, 404)
+        self._subir(self.cli, self.JPEG)                                               # la suya sí
+        self.assertEqual(self.client.get(f'/api/usuarios/{self.cli.id}/foto/').status_code, 200)
+        self.client.force_authenticate(None)                                           # sin sesión: no
+        self.assertEqual(self.client.get(f'/api/usuarios/{self.carlo.id}/foto/').status_code, 401)
+
+    def test_listado_de_usuarios_marca_quien_tiene_foto_sin_traer_la_imagen(self):
+        self._subir(self.carlo, self.JPEG)
+        self.client.force_authenticate(self.karen)
+        r = self.client.get('/api/usuarios/?rol=coordinador')
+        datos = r.data.get('results', r.data)
+        por_usuario = {u['username']: u['foto_version'] for u in datos}
+        self.assertIsNotNone(por_usuario['carlo'])
+        self.assertIsNone(por_usuario['karen'])
+        self.assertNotIn('foto', datos[0]); self.assertNotIn('contenido', datos[0])
+
+    # ── contraseña ──
+    def _cambiar(self, **kw):
+        body = {'password_actual': 'pass12345', 'password_nueva': 'NuevaClave99', 'confirmar_password': 'NuevaClave99'}
+        body.update(kw)
+        self.client.force_authenticate(self.carlo)
+        return self.client.post('/api/auth/cambiar-password/', body, format='json')
+
+    def test_cambiar_password_ok(self):
+        r = self._cambiar()
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data['access'] and r.data['refresh'])
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post('/api/auth/login/', {'username': 'carlo', 'password': 'NuevaClave99'}, format='json').status_code, 200)
+        self.assertEqual(self.client.post('/api/auth/login/', {'username': 'carlo', 'password': 'pass12345'}, format='json').status_code, 400)  # la clave vieja ya no sirve
+
+    def test_validaciones_de_la_contraseña(self):
+        self.assertEqual(self._cambiar(password_actual='mala').status_code, 400)                  # actual incorrecta
+        self.assertEqual(self._cambiar(password_nueva='corta', confirmar_password='corta').status_code, 400)
+        self.assertEqual(self._cambiar(confirmar_password='otra-distinta1').status_code, 400)      # no coinciden
+        self.assertEqual(self._cambiar(password_nueva='pass12345', confirmar_password='pass12345').status_code, 400)  # igual a la actual
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/cambiar-password/', {'password_actual': 'x', 'password_nueva': 'y'}, format='json')
+        self.assertEqual(r.status_code, 401)
+        self.assertTrue(User.objects.get(pk=self.carlo.pk).check_password('pass12345'))             # nada cambió
+
+    def test_cierra_las_otras_sesiones_pero_no_esta(self):
+        self.client.force_authenticate(None)
+        otra = self.client.post('/api/auth/login/', {'username': 'carlo', 'password': 'pass12345'}, format='json').data['refresh']
+        r = self._cambiar()
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post('/api/auth/refresh/', {'refresh': otra}, format='json').status_code, 401)   # la otra sesión murió
+        self.assertEqual(self.client.post('/api/auth/refresh/', {'refresh': r.data['refresh']}, format='json').status_code, 200)
+
+    def test_limite_de_intentos_al_adivinar_la_contraseña_actual(self):
+        codigos = [self._cambiar(password_actual='mala').status_code for _ in range(7)]
+        self.assertEqual(codigos[:5], [400] * 5)
+        self.assertEqual(codigos[-1], 429)
+
+
+class CoordinadorSinVerificacionTests(APITestCase):
+    """El correo de los coordinadores no requiere verificación."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        self.admin = User.objects.create_user('adm', 'adm@x.com', 'pass12345', rol='admin', email_verificado=True)
+
+    def _alta(self, username, rol, email=None):
+        self.client.force_authenticate(self.admin)
+        return self.client.post('/api/usuarios/', {'username': username, 'email': email or f'{username}@x.com',
+                                'rol': rol, 'nombre': username, 'password': 'pass12345'}, format='json')
+
+    def _login(self, username):
+        self.client.force_authenticate(None)
+        return self.client.post('/api/auth/login/', {'username': username, 'password': 'pass12345'}, format='json')
+
+    def test_coordinador_creado_por_el_admin_entra_de_inmediato(self):
+        self.assertEqual(self._alta('carlo', 'coordinador').status_code, 201)
+        self.assertTrue(User.objects.get(username='carlo').email_verificado)
+        self.assertEqual(self._login('carlo').status_code, 200)
+
+    def test_los_clientes_siguen_necesitando_verificar(self):
+        self.assertEqual(self._alta('cli', 'cliente').status_code, 201)
+        self.assertFalse(User.objects.get(username='cli').email_verificado)
+        r = self._login('cli')
+        self.assertEqual(r.status_code, 403); self.assertTrue(r.data['no_verificado'])
+
+    def test_el_registro_publico_no_puede_hacerse_coordinador(self):
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/registro/', {'username': 'listo', 'email': 'listo@x.com', 'nombre': 'N', 'rol': 'coordinador',
+                             'apellido_paterno': 'P', 'password': 'pass12345', 'confirmar_password': 'pass12345',
+                             'aceptar_aviso_privacidad': True}, format='json')
+        self.assertEqual(r.status_code, 201)
+        u = User.objects.get(username='listo')
+        self.assertEqual(u.rol, 'cliente'); self.assertFalse(u.email_verificado)
+
+    def test_cambiar_a_un_cliente_a_coordinador_lo_deja_verificado(self):
+        self._alta('promo', 'cliente')
+        uid = User.objects.get(username='promo').id
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.patch(f'/api/usuarios/{uid}/', {'rol': 'coordinador'}, format='json').status_code, 200)
+        self.assertTrue(User.objects.get(pk=uid).email_verificado)
+
+    def test_guardar_con_update_fields_tambien_lo_verifica(self):
+        u = User.objects.create_user('x1', 'x1@x.com', 'pass12345', rol='cliente')
+        u.rol = 'coordinador'
+        u.save(update_fields=['rol'])
+        self.assertTrue(User.objects.get(pk=u.pk).email_verificado)
+
+    def test_migracion_marca_a_los_coordinadores_existentes(self):
+        import importlib
+        from django.apps import apps
+        from .models import TokenVerificacion
+        coord = User.objects.create_user('viejo', 'viejo@x.com', 'pass12345', rol='coordinador')
+        cli = User.objects.create_user('cli2', 'cli2@x.com', 'pass12345', rol='cliente')
+        User.objects.filter(pk=coord.pk).update(email_verificado=False)           # fila antigua
+        TokenVerificacion.objects.create(usuario=coord); TokenVerificacion.objects.create(usuario=cli)
+        mig = importlib.import_module('tallerdiesel_api.migrations.0017_coordinadores_verificados')
+        mig.verificar_coordinadores(apps, None)
+        self.assertTrue(User.objects.get(pk=coord.pk).email_verificado)
+        self.assertFalse(User.objects.get(pk=cli.pk).email_verificado)             # los clientes no cambian
+        self.assertFalse(TokenVerificacion.objects.filter(usuario=coord).exists())
+        self.assertTrue(TokenVerificacion.objects.filter(usuario=cli).exists())
+
+    def test_red_de_seguridad_en_el_login(self):
+        User.objects.create_user('legacy', 'l@x.com', 'pass12345', rol='coordinador')
+        User.objects.filter(username='legacy').update(email_verificado=False)      # fila que se coló sin verificar
+        self.assertEqual(self._login('legacy').status_code, 200)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Codificación 1-8: folio al asignar, siguiente en espera, edición del coordinador asignado,
+#  cambio de rol, notificaciones y reasignación de técnico en el mapa.
+# ═════════════════════════════════════════════════════════════════════════════
+
+class BaseTickets(APITestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        mk = lambda u, rol, **kw: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u, email_verificado=True, **kw)
+        self.admin = mk('adm', 'admin')
+        self.carlo = mk('carlo', 'coordinador')
+        self.karen = mk('karen', 'coordinador')
+        self.cli = mk('cli', 'cliente')
+        self.cli2 = mk('cli2', 'cliente')
+        self.tec1 = Tecnico.objects.create(nombre='Cerca', categoria='motor_diesel', ciudad='Monterrey', estado='NL',
+                                           telefono='1', latitud=25.68, longitud=-100.31, calificacion=4.5)
+        self.tec2 = Tecnico.objects.create(nombre='Lejos', categoria='electrico', ciudad='Tijuana', estado='BC',
+                                           telefono='2', latitud=32.50, longitud=-117.00, calificacion=3.0)
+        self.tec3 = Tecnico.objects.create(nombre='Ocupado', categoria='aire', ciudad='Monterrey', estado='NL',
+                                           telefono='3', latitud=25.70, longitud=-100.30, disponible=False)
+
+    def _solicitud(self, cliente=None, **kw):
+        """Un servicio recién pedido: pendiente y sin coordinador (aún sin folio)."""
+        base = dict(empresa='ACME', fecha=date.today(), unidad='U1', estatus='pendiente', cliente=cliente or self.cli)
+        base.update(kw)
+        return Ticket.objects.create(**base)
+
+    def _con(self, quien):
+        self.client.force_authenticate(quien)
+        return self.client
+
+
+class FolioAlAsignarTests(BaseTickets):
+    """1. El número consecutivo del ticket se genera al asignarlo a un coordinador."""
+
+    def test_una_solicitud_nueva_no_tiene_folio_y_se_nombra_solicitud_n(self):
+        t = self._solicitud()
+        self.assertEqual(t.ticket_id, '')
+        self.assertEqual(t.etiqueta, f'Solicitud #{t.pk}')
+
+    def test_varias_solicitudes_en_espera_conviven_sin_folio(self):
+        for _ in range(3):
+            self._solicitud()
+        self.assertEqual(Ticket.objects.filter(ticket_id='').count(), 3)       # el índice único no se queja
+
+    def test_al_tomarlo_un_coordinador_recibe_el_siguiente_folio_consecutivo(self):
+        a, b = self._solicitud(), self._solicitud(cliente=self.cli2)
+        r1 = self._con(self.carlo).post(f'/api/tickets/{a.id}/tomar_como_coordinador/', {}, format='json')
+        r2 = self._con(self.karen).post(f'/api/tickets/{b.id}/tomar_como_coordinador/', {}, format='json')
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual((r1.data['ticket_id'], r2.data['ticket_id']), ('TD001', 'TD002'))
+        a.refresh_from_db()
+        self.assertEqual(a.coordinador, self.carlo)
+        # el cliente se entera y la solicitud ya no queda pendiente para los demás
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.cli, tipo='coordinador_asignado').exists())
+
+    def test_un_ticket_creado_ya_con_coordinador_nace_con_folio(self):
+        t = self._solicitud(coordinador=self.carlo)
+        self.assertEqual(t.ticket_id, 'TD001')
+
+    def test_el_admin_al_asignar_coordinador_tambien_genera_el_folio(self):
+        t = self._solicitud()
+        r = self._con(self.admin).post(f'/api/tickets/{t.id}/tomar_como_coordinador/', {'coordinador_id': self.karen.id}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        t.refresh_from_db()
+        self.assertEqual((t.coordinador, t.ticket_id), (self.karen, 'TD001'))
+
+    def test_el_folio_no_cambia_si_se_reasigna_y_no_se_repite(self):
+        t = self._solicitud(coordinador=self.carlo)
+        self._con(self.admin).post(f'/api/tickets/{t.id}/tomar_como_coordinador/', {'coordinador_id': self.karen.id}, format='json')
+        t.refresh_from_db()
+        self.assertEqual(t.ticket_id, 'TD001')
+        self.assertEqual(self._solicitud(coordinador=self.carlo).ticket_id, 'TD002')
+
+    def test_asignar_folio_es_seguro_si_se_llama_dos_veces(self):
+        t = self._solicitud()
+        Ticket.objects.filter(pk=t.pk).update(coordinador=self.carlo)
+        t.refresh_from_db()
+        f1 = t.asignar_folio()
+        t2 = Ticket.objects.get(pk=t.pk)
+        self.assertEqual(t2.asignar_folio(), f1)
+
+    def test_avisos_y_pdf_funcionan_con_tickets_sin_folio(self):
+        t = self._solicitud()
+        r = self._con(self.carlo).get(f'/api/tickets/{t.id}/pdf/')
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('solicitud-', r['Content-Disposition'])
+
+
+class SiguienteEnEsperaTests(BaseTickets):
+    """2. Al finalizar un ticket, el coordinador recibe automáticamente el siguiente en espera."""
+
+    def _finalizar_con_cliente(self, ticket, coord, cliente):
+        self._con(coord).post(f'/api/tickets/{ticket.id}/solicitar_finalizacion/')
+        r = self._con(cliente).post(f'/api/tickets/{ticket.id}/responder_finalizacion/', {'acepta': True}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_recibe_el_mas_antiguo_en_espera_y_nadie_mas_se_lo_lleva(self):
+        activo = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        viejo = self._solicitud(cliente=self.cli2)
+        nuevo = self._solicitud(cliente=self.cli2)
+        Ticket.objects.filter(pk=viejo.pk).update(fecha_creacion='2020-01-01T00:00:00Z')    # llegó primero
+        self._finalizar_con_cliente(activo, self.carlo, self.cli)
+        viejo.refresh_from_db(); nuevo.refresh_from_db()
+        self.assertEqual(viejo.coordinador, self.carlo)
+        self.assertTrue(viejo.ticket_id.startswith('TD'))          # y recibió su folio
+        self.assertIsNone(nuevo.coordinador)                         # solo se asigna UNO
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.carlo, tipo='ticket_asignado', referencia_id=viejo.id).exists())
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.cli2, tipo='coordinador_asignado').exists())
+        self.assertTrue(viejo.comentarios.filter(texto__icontains='automáticamente').exists())
+
+    def test_no_toca_tickets_que_no_estan_en_espera(self):
+        activo = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        ya_de_otro = self._solicitud(cliente=self.cli2, coordinador=self.karen)
+        con_tecnico_directo = self._solicitud(cliente=self.cli2, tipo_solicitud='tecnico')
+        en_camino = self._solicitud(cliente=self.cli2, estatus='atendido')
+        papelera = self._solicitud(cliente=self.cli2, eliminado=True)
+        self._finalizar_con_cliente(activo, self.carlo, self.cli)
+        for t in (ya_de_otro, con_tecnico_directo, en_camino, papelera):
+            t.refresh_from_db()
+        self.assertEqual(ya_de_otro.coordinador, self.karen)
+        self.assertIsNone(con_tecnico_directo.coordinador)
+        self.assertIsNone(en_camino.coordinador)
+        self.assertIsNone(papelera.coordinador)
+
+    def test_sin_nadie_en_espera_no_pasa_nada(self):
+        activo = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        self._finalizar_con_cliente(activo, self.carlo, self.cli)
+        self.assertFalse(Notificacion.objects.filter(tipo='ticket_asignado').exists())
+
+    def test_no_se_asigna_si_el_coordinador_esta_inactivo_o_ya_no_es_coordinador(self):
+        from .servicios import asignar_siguiente_en_espera
+        espera = self._solicitud()
+        User.objects.filter(pk=self.carlo.pk).update(is_active=False)
+        self.assertIsNone(asignar_siguiente_en_espera(User.objects.get(pk=self.carlo.pk)))
+        self.assertIsNone(asignar_siguiente_en_espera(self.admin))
+        self.assertIsNone(asignar_siguiente_en_espera(None))
+        espera.refresh_from_db(); self.assertIsNone(espera.coordinador)
+
+    def test_dos_coordinadores_que_terminan_a_la_vez_no_se_llevan_el_mismo_ticket(self):
+        from .servicios import asignar_siguiente_en_espera
+        espera = self._solicitud()
+        r1 = asignar_siguiente_en_espera(self.carlo)
+        r2 = asignar_siguiente_en_espera(self.karen)
+        self.assertEqual(r1.pk, espera.pk)
+        self.assertIsNone(r2)                                        # ya no quedaba ninguno
+        espera.refresh_from_db(); self.assertEqual(espera.coordinador, self.carlo)
+
+
+class EdicionSoloCoordinadorAsignadoTests(BaseTickets):
+    """3. Solo el coordinador asignado edita; los demás roles ven en modo lectura."""
+
+    def setUp(self):
+        super().setUp()
+        self.t = self._solicitud(coordinador=self.carlo, estatus='proceso')
+
+    def test_el_asignado_edita(self):
+        r = self._con(self.carlo).patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'Cambio de turbo'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Ticket.objects.get(pk=self.t.pk).reparacion, 'Cambio de turbo')
+
+    def test_otro_coordinador_lo_ve_pero_no_lo_edita(self):
+        c = self._con(self.karen)
+        d = c.get(f'/api/tickets/{self.t.id}/')
+        self.assertEqual(d.status_code, 200)                         # lectura permitida
+        self.assertFalse(d.data['puede_editar'])
+        self.assertIn(self.t.id, [x['id'] for x in c.get('/api/tickets/').data.get('results', c.get('/api/tickets/').data)])
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'x'}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/solicitar_finalizacion/').status_code, 403)
+        self.assertEqual(c.delete(f'/api/tickets/{self.t.id}/').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/tomar_como_coordinador/', {}, format='json').status_code, 409)
+        self.t.refresh_from_db()
+        self.assertEqual((self.t.reparacion, self.t.coordinador), ('', self.carlo))
+
+    def test_el_admin_es_solo_lectura_pero_conserva_la_administracion(self):
+        c = self._con(self.admin)
+        d = c.get(f'/api/tickets/{self.t.id}/')
+        self.assertFalse(d.data['puede_editar'])
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'x'}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json').status_code, 403)
+        # administración: reasignar coordinador, permitir edición de un ticket cerrado, papelera
+        r = c.post(f'/api/tickets/{self.t.id}/tomar_como_coordinador/', {'coordinador_id': self.karen.id}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/permitir_edicion_coordinador/', {'activar': True}, format='json').status_code, 200)
+        self.assertEqual(c.delete(f'/api/tickets/{self.t.id}/').status_code, 204)
+
+    def test_interruptor_para_que_el_admin_tambien_edite(self):
+        from django.test import override_settings
+        with override_settings(ADMIN_PUEDE_EDITAR_TICKETS=True):
+            c = self._con(self.admin)
+            self.assertTrue(c.get(f'/api/tickets/{self.t.id}/').data['puede_editar'])
+            self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'ok'}, format='json').status_code, 200)
+
+    def test_el_cliente_sigue_pudiendo_lo_suyo(self):
+        c = self._con(self.cli)
+        self.assertFalse(c.get(f'/api/tickets/{self.t.id}/').data['puede_editar'])
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'unidad': 'Kenworth'}, format='json').status_code, 200)   # su propia edición
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'estatus': 'terminado'}, format='json').status_code, 403)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/agregar_comentario/', {'texto': 'Hola'}, format='json').status_code, 201)
+        self.assertEqual(self._con(self.cli2).get(f'/api/tickets/{self.t.id}/').status_code, 404)    # y no ve los de otros clientes
+
+    def test_el_primero_que_edita_un_ticket_libre_se_queda_con_el_y_nadie_mas(self):
+        libre = self._solicitud()
+        r = self._con(self.karen).patch(f'/api/tickets/{libre.id}/', {'reparacion': 'Reviso'}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        libre.refresh_from_db()
+        self.assertEqual((libre.coordinador, libre.ticket_id, libre.reparacion), (self.karen, 'TD002', 'Reviso'))
+        # Carlo llega tarde: ahora es de Karen
+        self.assertEqual(self._con(self.carlo).patch(f'/api/tickets/{libre.id}/', {'reparacion': 'Yo'}, format='json').status_code, 403)
+
+    def test_un_coordinador_no_puede_pasarle_el_ticket_a_otro_desde_el_formulario(self):
+        r = self._con(self.carlo).patch(f'/api/tickets/{self.t.id}/', {'coordinador': self.karen.id}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.t.refresh_from_db(); self.assertEqual(self.t.coordinador, self.carlo)
+        r = self._con(self.carlo).patch(f'/api/tickets/{self.t.id}/', {'coordinador': None}, format='json')   # tampoco soltarlo
+        self.t.refresh_from_db(); self.assertEqual(self.t.coordinador, self.carlo)
+
+    def test_asignar_tecnico_a_un_ticket_libre_lo_toma_el_coordinador(self):
+        libre = self._solicitud()
+        r = self._con(self.karen).post(f'/api/tickets/{libre.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        libre.refresh_from_db()
+        self.assertEqual((libre.coordinador, libre.tecnico, libre.estatus), (self.karen, self.tec1, 'atendido'))
+        self.assertTrue(libre.ticket_id)
+
+    def test_solo_el_coordinador_asignado_puede_solicitar_finalizacion(self):
+        self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{self.t.id}/solicitar_finalizacion/').status_code, 200)
+
+    def test_eliminar_un_ticket_libre_es_solo_del_admin(self):
+        libre = self._solicitud()
+        self.assertEqual(self._con(self.carlo).delete(f'/api/tickets/{libre.id}/').status_code, 403)
+        self.assertEqual(self._con(self.admin).delete(f'/api/tickets/{libre.id}/').status_code, 204)
+
+    def test_dashboard_del_coordinador_muestra_lo_suyo_y_lo_libre_pero_la_bitacora_todo(self):
+        libre = self._solicitud(); ajeno = self._solicitud(coordinador=self.karen)
+        d = self._con(self.carlo).get('/api/tickets/dashboard_coordinador/').data
+        ids = {x['id'] for x in d['tickets']}
+        self.assertEqual(ids, {self.t.id, libre.id})
+        bit = self.client.get('/api/tickets/').data
+        bit = {x['id'] for x in bit.get('results', bit)}
+        self.assertTrue({self.t.id, libre.id, ajeno.id} <= bit)
+
+
+class CambioDeRolTests(BaseTickets):
+    """6. Al cambiar el rol de un usuario se actualizan sus permisos y lo que dependía de su rol."""
+
+    def _rol(self, usuario, rol):
+        return self._con(self.admin).patch(f'/api/usuarios/{usuario.id}/', {'rol': rol}, format='json')
+
+    def test_pierde_el_permiso_de_editar_el_sistema_al_dejar_de_ser_coordinador(self):
+        User.objects.filter(pk=self.carlo.pk).update(puede_editar_sistema=True)
+        self.assertEqual(self._rol(self.carlo, 'cliente').status_code, 200)
+        c = User.objects.get(pk=self.carlo.pk)
+        self.assertEqual((c.rol, c.puede_editar_sistema), ('cliente', False))
+        # y ya no puede usar lo de coordinador / sistema
+        self.client.force_authenticate(c)
+        self.assertEqual(self.client.post('/api/usuarios/', {'username': 'x', 'email': 'x@x.com', 'rol': 'cliente', 'password': 'pass12345'}, format='json').status_code, 403)
+        self.assertEqual(self.client.get('/api/tickets/dashboard_coordinador/').status_code in (403, 200), True)
+
+    def test_sus_tickets_sin_finalizar_vuelven_a_la_espera_y_el_admin_es_avisado(self):
+        a = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        b = self._solicitud(coordinador=self.carlo, estatus='terminado')
+        self._rol(self.carlo, 'cliente')
+        a.refresh_from_db(); b.refresh_from_db()
+        self.assertIsNone(a.coordinador)                              # vuelve a la cola
+        self.assertEqual(a.ticket_id, 'TD001')                        # conserva su folio
+        self.assertEqual(b.coordinador, self.carlo)                   # el finalizado conserva su historial
+        self.assertTrue(a.comentarios.filter(texto__icontains='dejó de ser coordinador').exists())
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.admin, titulo__icontains='sin coordinador').exists())
+
+    def test_al_pasar_a_coordinador_queda_listo_para_trabajar(self):
+        self.assertEqual(self._rol(self.cli, 'coordinador').status_code, 200)
+        u = User.objects.get(pk=self.cli.pk)
+        self.assertEqual(u.rol, 'coordinador'); self.assertTrue(u.email_verificado)
+        libre = self._solicitud(cliente=self.cli2)
+        self.assertEqual(self._con(u).post(f'/api/tickets/{libre.id}/tomar_como_coordinador/', {}, format='json').status_code, 200)
+
+    def test_pasar_a_admin_no_conserva_el_permiso_de_coordinador(self):
+        User.objects.filter(pk=self.carlo.pk).update(puede_editar_sistema=True)
+        self._rol(self.carlo, 'admin')
+        self.assertFalse(User.objects.get(pk=self.carlo.pk).puede_editar_sistema)
+
+    def test_el_nuevo_rol_aplica_de_inmediato_y_se_ve_en_auth_me(self):
+        self._rol(self.carlo, 'cliente')
+        self.client.force_authenticate(User.objects.get(pk=self.carlo.pk))
+        self.assertEqual(self.client.get('/api/auth/me/').data['rol'], 'cliente')
+
+    def test_editar_otros_datos_sin_cambiar_el_rol_no_toca_tickets(self):
+        a = self._solicitud(coordinador=self.carlo, estatus='proceso')
+        self._con(self.admin).patch(f'/api/usuarios/{self.carlo.id}/', {'puesto': 'Norte'}, format='json')
+        a.refresh_from_db(); self.assertEqual(a.coordinador, self.carlo)
+
+
+class NotificacionesTiempoRealTests(BaseTickets):
+    """7. Notificaciones ligeras (se consultan cada 5 s) que persisten al cerrar sesión."""
+
+    def test_persisten_al_cerrar_y_volver_a_iniciar_sesion(self):
+        Notificacion.objects.create(destinatario=self.carlo, titulo='Hola', mensaje='m')
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/login/', {'username': 'carlo', 'password': 'pass12345'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer ' + r.data['access'])
+        lista = self.client.get('/api/notificaciones/').data
+        self.assertEqual([n['titulo'] for n in lista], ['Hola'])
+        self.assertFalse(lista[0]['leida'])                           # sigue sin leer
+
+    def test_devuelve_como_maximo_200_las_mas_recientes(self):
+        Notificacion.objects.bulk_create([Notificacion(destinatario=self.carlo, titulo=f'n{i}', mensaje='m') for i in range(230)])
+        lista = self._con(self.carlo).get('/api/notificaciones/').data
+        self.assertEqual(len(lista), 200)
+
+    def test_chat_cuenta_mensajes_no_leidos_por_ticket_y_los_marca_solo_para_el_usuario(self):
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        otro_ticket = self._solicitud(cliente=self.cli2, coordinador=self.carlo, estatus='proceso')
         ComentarioTicket.objects.create(
-            ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-            texto=(f'Técnico reasignado: {tecnico_anterior.nombre} → {tecnico.nombre}' if es_cambio
-                   else f'Técnico asignado: {tecnico.nombre}'),
+            ticket=ticket, autor=self.carlo, autor_nombre=self.carlo.nombre_completo,
+            texto='¿En qué puedo ayudarte?',
         )
-        if ticket.estatus != estatus_anterior:
-            ComentarioTicket.objects.create(
-                ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-                texto=f'Estatus cambiado de "{dict(Ticket.ESTATUS_CHOICES).get(estatus_anterior)}" a "{ticket.get_estatus_display()}"',
-                es_cambio_estatus=True, estatus_anterior=estatus_anterior, estatus_nuevo=ticket.estatus,
-            )
-        # Si la solicitud de origen aún no estaba marcada como atendida, márcala.
-        if hasattr(ticket, 'solicitud_origen') and ticket.solicitud_origen and not ticket.solicitud_origen.atendida:
-            ticket.solicitud_origen.atendida = True
-            ticket.solicitud_origen.save()
+        mensajes = self._con(self.cli).get(f'/api/tickets/{ticket.id}/mensajes/')
+        self.assertEqual(mensajes.status_code, 200, mensajes.data)
+        self.assertEqual(mensajes.data['comentarios'][0]['texto'], '¿En qué puedo ayudarte?')
 
-        if ticket.cliente_id:
-            Notificacion.objects.create(
-                destinatario=ticket.cliente,
-                titulo='Técnico actualizado' if es_cambio else 'Técnico asignado a tu servicio',
-                mensaje=f'{tecnico.nombre} {"ahora" if es_cambio else ""} fue asignado a tu ticket {ticket.etiqueta}.',
-                tipo='tecnico_asignado', referencia_id=ticket.id,
-            )
-            if ticket.cliente.email:
-                try:
-                    url = f'{settings.FRONTEND_URL}/cliente/dashboard'
-                    asunto = f'{"🔧 Cambiamos tu técnico" if es_cambio else "🔧 Ya tienes técnico asignado"} — {ticket.etiqueta}'
-                    texto_plano = f'{tecnico.nombre} {"ahora" if es_cambio else ""} atenderá tu servicio (ticket {ticket.etiqueta}).\n\nIngresa al sistema: {url}'
-                    _enviar_html_en_segundo_plano(
-                        asunto=asunto,
-                        destinatarios=[ticket.cliente.email],
-                        html_body=email_tecnico_asignado(tecnico.nombre, ticket.etiqueta, es_cambio, url),
-                        text_body=texto_plano,
-                    )
-                except Exception as e:
-                    print(f'⚠️  Error enviando correo de técnico asignado: {e}')
-
-        return Response(TicketSerializer(ticket, context={'request': request}).data)
-
-    @action(detail=True, methods=['get'])
-    def tecnicos_cercanos(self, request, pk=None):
-        """Técnicos activos con su distancia al servicio (km), del más cercano al más lejano, para elegir en el
-        mapa. La ubicación sale del ticket o de ?lat=&lng= (cuando el coordinador la mueve en el mapa).
-        Sin ubicación, se devuelven sin distancia."""
-        if request.user.rol not in ('admin', 'coordinador'):
-            return Response({'error': 'No tienes permiso.'}, status=403)
-        ticket = self.get_object()
-        ref = None
-        if request.query_params.get('lat') not in (None, '') or request.query_params.get('lng') not in (None, ''):
-            ref = coordenada_valida(request.query_params.get('lat'), request.query_params.get('lng'))
-            if not ref:
-                return Response({'error': 'La ubicación no es válida.'}, status=400)
-        elif ticket.latitud is not None and ticket.longitud is not None:
-            ref = (ticket.latitud, ticket.longitud)
-        resultado = []
-        tecnicos = _con_resumen_calificaciones(Tecnico.objects.filter(activo=True))
-        for t in tecnicos:
-            resultado.append({
-                'id': t.id, 'nombre': t.nombre, 'categoria': t.categoria,
-                'categoria_display': t.get_categoria_display(), 'ciudad': t.ciudad, 'estado': t.estado,
-                'telefono': t.telefono, 'latitud': t.latitud, 'longitud': t.longitud,
-                'calificacion': round(t.calificacion, 1), 'disponible': t.disponible,
-                'calificacion_promedio': round(float(t.promedio_opiniones), 1) if t.promedio_opiniones is not None else None,
-                'total_calificaciones': t.total_opiniones,
-                'es_actual': t.id == ticket.tecnico_id,
-                'distancia_km': round(distancia_km(ref[0], ref[1], t.latitud, t.longitud), 1) if ref else None,
-            })
-        # Disponibles primero; dentro de cada grupo, por distancia (o por nombre si no hay ubicación)
-        resultado.sort(key=lambda x: (not x['disponible'],
-                                      x['distancia_km'] if x['distancia_km'] is not None else 0, x['nombre']))
-        return Response({'ubicacion': {'latitud': ref[0], 'longitud': ref[1]} if ref else None,
-                         'tecnicos': resultado})
-
-    @action(detail=True, methods=['post'])
-    def tomar_como_coordinador(self, request, pk=None):
-        """Cuando un cliente pide en un comentario que su servicio (originalmente
-        directo con técnico) lo atienda un coordinador, este endpoint permite que
-        el Coordinador (o Admin, indicando a quién) tome el ticket. A partir de
-        ahí el ticket muestra la línea de tiempo por estatus como cualquier
-        servicio coordinado."""
-        ticket = self.get_object()
-        if request.user.rol not in ('admin', 'coordinador'):
-            return Response({'error': 'No tienes permiso para tomar este servicio.'}, status=403)
-        if ticket.estatus == 'terminado':
-            return Response({'error': 'Este ticket ya está finalizado.'}, status=400)
-
-        coordinador_id = request.data.get('coordinador_id')
-        if request.user.rol == 'coordinador':
-            # Un coordinador solo puede tomar un ticket LIBRE (para quitárselo a otro lo reasigna el Administrador)
-            if coordinador_id and str(coordinador_id) != str(request.user.id):
-                return Response({'error': 'Solo el Administrador puede asignar el ticket a otro coordinador.'}, status=403)
-            if ticket.coordinador_id == request.user.id:
-                return Response(TicketSerializer(ticket, context={'request': request}).data)
-            if not reclamar_ticket(ticket, request.user):
-                return Response({'error': 'Este ticket ya lo atiende otro coordinador.'}, status=409)
-            ticket.refresh_from_db()
-            return Response(TicketSerializer(ticket, context={'request': request}).data)
-        if coordinador_id:
-            try:
-                nuevo_coordinador = User.objects.get(pk=coordinador_id, rol='coordinador')
-            except Usuario.DoesNotExist:
-                return Response({'error': 'Coordinador no encontrado.'}, status=404)
-        else:
-            return Response({'error': 'Indica qué coordinador va a tomar este servicio.'}, status=400)
-
-        ticket.coordinador = nuevo_coordinador
-        ticket.save()                              # al tener coordinador se genera su folio consecutivo
-        try:
-            if not ticket.solicitud_origen.atendida:
-                ticket.solicitud_origen.atendida = True
-                ticket.solicitud_origen.save(update_fields=['atendida'])
-        except Exception:
-            pass
-
-        ComentarioTicket.objects.create(
-            ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-            texto=f'{nuevo_coordinador.nombre_completo} tomó este servicio como coordinador.',
-        )
-
-        if ticket.cliente_id:
-            Notificacion.objects.create(
-                destinatario=ticket.cliente,
-                titulo='Un coordinador tomó tu servicio',
-                mensaje=f'{nuevo_coordinador.nombre_completo} ahora coordina tu ticket {ticket.etiqueta}.',
-                tipo='coordinador_asignado', referencia_id=ticket.id,
-            )
-            if ticket.cliente.email:
-                try:
-                    url = f'{settings.FRONTEND_URL}/cliente/dashboard'
-                    _enviar_html_en_segundo_plano(
-                        asunto=f'🧑‍💼 Un coordinador tomó tu servicio — {ticket.etiqueta}',
-                        destinatarios=[ticket.cliente.email],
-                        html_body=email_nuevo_comentario(nuevo_coordinador.nombre_completo, 'coordinador', ticket.etiqueta,
-                                                          f'{nuevo_coordinador.nombre_completo} tomó tu servicio y ahora le da seguimiento personal.', url),
-                        text_body=f'{nuevo_coordinador.nombre_completo} tomó tu servicio {ticket.etiqueta} y ahora le da seguimiento. Ingresa al sistema: {url}',
-                    )
-                except Exception as e:
-                    print(f'⚠️  Error enviando correo de coordinador asignado: {e}')
-
-        return Response(TicketSerializer(ticket, context={'request': request}).data)
-
-    @action(detail=True, methods=['post'])
-    def agregar_comentario(self, request, pk=None):
-        ticket = self.get_object()
-        texto = request.data.get('texto', '').strip()
-        if not texto:
-            return Response({'error': 'El comentario no puede estar vacío.'}, status=400)
-        comentario = ComentarioTicket.objects.create(
-            ticket=ticket,
-            autor=request.user,
-            autor_nombre=request.user.nombre_completo,
-            texto=texto,
-        )
-        if request.user.rol == 'cliente':
-            Ticket.objects.filter(pk=ticket.pk).update(
-                fecha_ultimo_mensaje_cliente=comentario.fecha,
-                fecha_ultima_respuesta_coordinador=None,
-                alerta_respuesta_sla_enviada=False,
-            )
-        elif request.user.rol in ('coordinador', 'admin'):
-            Ticket.objects.filter(pk=ticket.pk).update(
-                fecha_ultima_respuesta_coordinador=comentario.fecha,
-                alerta_respuesta_sla_enviada=True,
-            )
-        self._notificar_comentario(ticket, request.user, texto)
-        return Response(ComentarioTicketSerializer(comentario).data, status=201)
-
-    @action(detail=True, methods=['post'], url_path='marcar-mensajes-leidos')
-    def marcar_mensajes_leidos(self, request, pk=None):
-        ticket = self.get_object()
-        actualizados = Notificacion.objects.filter(
-            destinatario=request.user,
-            referencia_id=ticket.id,
-            tipo='comentario',
-            leida=False,
-        ).update(leida=True)
-        return Response({'marcados': actualizados})
-
-    @action(detail=True, methods=['get'])
-    def mensajes(self, request, pk=None):
-        ticket = self.get_object()
-        comentarios = ticket.comentarios.select_related('autor', 'evidencia')
-        return Response({
-            'ticket_id': ticket.id,
-            'etiqueta': ticket.etiqueta,
-            'comentarios': ComentarioTicketSerializer(comentarios, many=True).data,
-        })
-
-    @action(detail=True, methods=['post'])
-    def editar_comentario(self, request, pk=None):
-        """El autor edita su propio comentario (también con el servicio finalizado)."""
-        ticket = self.get_object()
-        texto = (request.data.get('texto') or '').strip()
-        if not texto:
-            return Response({'error': 'El comentario no puede estar vacío.'}, status=400)
-        try:
-            comentario = ticket.comentarios.get(pk=request.data.get('comentario_id'))
-        except (ComentarioTicket.DoesNotExist, ValueError, TypeError):
-            return Response({'error': 'Comentario no encontrado.'}, status=404)
-        if comentario.autor_id != request.user.id or comentario.es_cambio_estatus:
-            return Response({'error': 'Solo puedes editar tus propios comentarios.'}, status=403)
-        comentario.texto = texto
-        comentario.editado = True
-        comentario.save(update_fields=['texto', 'editado'])
-        return Response(ComentarioTicketSerializer(comentario).data)
-
-    def _notificar_comentario(self, ticket, autor, texto):
-        """Avisa (campana + correo) a la otra parte de la conversación cuando se agrega un comentario."""
-        try:
-            if autor.rol == 'cliente':
-                # Avisar al coordinador asignado, o a los admins si aún no hay coordinador
-                destinatarios_usuarios = []
-                if ticket.coordinador_id:
-                    destinatarios_usuarios = [ticket.coordinador]
-                else:
-                    destinatarios_usuarios = list(User.objects.filter(rol='admin', is_active=True))
-                emails = [u.email for u in destinatarios_usuarios if u.email]
-                correo_empresa = settings.EMAIL_EMPRESA
-                if correo_empresa not in emails:
-                    emails.append(correo_empresa)
-                emails = _correos_unicos(emails)   # coordinadores con el mismo correo: un solo envío
-                for u in destinatarios_usuarios:
-                    Notificacion.objects.create(
-                        destinatario=u,
-                        titulo='Nuevo mensaje del cliente',
-                        mensaje=f'{autor.nombre_completo} comentó en el ticket {ticket.etiqueta}: "{texto[:80]}"',
-                        tipo='comentario', referencia_id=ticket.id,
-                    )
-                if emails:
-                    url = f'{settings.FRONTEND_URL}/coordinador/dashboard'
-                    _enviar_html_en_segundo_plano(
-                        asunto=f'💬 Nuevo mensaje del cliente — {ticket.etiqueta}',
-                        destinatarios=emails,
-                        html_body=email_nuevo_comentario(autor.nombre_completo, 'cliente', ticket.etiqueta, texto, url),
-                        text_body=f'{autor.nombre_completo} comentó en el ticket {ticket.etiqueta}:\n\n"{texto}"\n\nIngresa al sistema: {url}',
-                    )
-            elif autor.rol in ('coordinador', 'admin'):
-                if ticket.cliente_id:
-                    # La alerta de la campana se crea siempre (también con el servicio finalizado)
-                    Notificacion.objects.create(
-                        destinatario=ticket.cliente,
-                        titulo='Respuesta a tu solicitud',
-                        mensaje=f'{autor.nombre_completo} respondió en tu ticket {ticket.etiqueta}: "{texto[:80]}"',
-                        tipo='comentario', referencia_id=ticket.id,
-                    )
-                if ticket.cliente_id and ticket.cliente.email:
-                    url = f'{settings.FRONTEND_URL}/cliente/dashboard'
-                    _enviar_html_en_segundo_plano(
-                        asunto=f'💬 Respuesta a tu solicitud — {ticket.etiqueta}',
-                        destinatarios=[ticket.cliente.email],
-                        html_body=email_nuevo_comentario(autor.nombre_completo, 'coordinador', ticket.etiqueta, texto, url),
-                        text_body=f'{autor.nombre_completo} respondió en tu ticket {ticket.etiqueta}:\n\n"{texto}"\n\nIngresa al sistema: {url}',
-                    )
-        except Exception as e:
-            print(f'⚠️  Error notificando comentario: {e}')
-
-    EXT_EVIDENCIA = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
-    MAX_EVIDENCIA_MB = 10
-
-    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
-    def subir_evidencia(self, request, pk=None):
-        """Coordinador/Admin sube una evidencia (foto o PDF) del servicio.
-        Funciona aunque el ticket esté finalizado (el cliente puede pedirla después)."""
-        import os
-        ticket = self.get_object()
-        es_cliente_del_ticket = ticket.cliente_id == request.user.id
-        if request.user.rol not in ('coordinador', 'admin') and not es_cliente_del_ticket:
-            return Response({'error': 'Solo las personas relacionadas con el servicio pueden adjuntar archivos.'}, status=403)
-        archivo = request.FILES.get('archivo')
-        if not archivo:
-            return Response({'error': 'Selecciona un archivo.'}, status=400)
-        ext = os.path.splitext(archivo.name)[1].lower()
-        if ext not in self.EXT_EVIDENCIA:
-            return Response({'error': 'Formato no permitido. Usa JPG, PNG, WEBP o PDF.'}, status=400)
-        if archivo.size > self.MAX_EVIDENCIA_MB * 1024 * 1024:
-            return Response({'error': f'El archivo pesa más de {self.MAX_EVIDENCIA_MB} MB.'}, status=400)
-        formatos_imagen = {'.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG', '.webp': 'WEBP'}
-        try:
-            if ext == '.pdf':
-                if archivo.read(5) != b'%PDF-':
-                    return Response({'error': 'El archivo no parece ser un PDF válido.'}, status=400)
-            elif ext in formatos_imagen:
-                imagen = Image.open(archivo)
-                imagen.verify()
-                if imagen.format != formatos_imagen[ext]:
-                    return Response({'error': 'El contenido de la imagen no coincide con su formato.'}, status=400)
-        except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
-            return Response({'error': 'El archivo de imagen está dañado o no es válido.'}, status=400)
-        finally:
-            archivo.seek(0)
-        try:
-            ev = EvidenciaTicket.objects.create(
-                ticket=ticket, archivo=archivo, nombre_original=archivo.name[:255],
-                subido_por=request.user, subido_por_nombre=request.user.nombre_completo,
-            )
-            ComentarioTicket.objects.create(
-                ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-                texto=f'📎 Evidencia del servicio subida: {ev.nombre_original}',
-                evidencia=ev,
-            )
-            if es_cliente_del_ticket:
-                destinatarios = [ticket.coordinador] if ticket.coordinador_id else list(
-                    User.objects.filter(rol='admin', is_active=True)
-                )
-                for destinatario in destinatarios:
-                    Notificacion.objects.create(
-                        destinatario=destinatario,
-                        titulo=f'Nueva evidencia del cliente en {ticket.etiqueta}',
-                        mensaje=f'{request.user.nombre_completo} adjuntó: {ev.nombre_original}',
-                        tipo='comentario', referencia_id=ticket.id,
-                    )
-            elif ticket.cliente_id:
-                Notificacion.objects.create(
-                    destinatario=ticket.cliente,
-                    titulo=f'Nueva evidencia en tu servicio {ticket.etiqueta}',
-                    mensaje=f'{request.user.nombre_completo} subió una evidencia: {ev.nombre_original}',
-                    tipo='comentario', referencia_id=ticket.id,
-                )
-            return Response(TicketSerializer(ticket, context={'request': request}).data, status=201)
-        except Exception as exc:
-            # Django no imprime el traceback en producción (DEBUG=False): lo mandamos al log
-            # de Railway y devolvemos el motivo para poder diagnosticarlo desde la pantalla.
-            import logging, traceback
-            logging.getLogger(__name__).error('Error en subir_evidencia:\n%s', traceback.format_exc())
-            print('ERROR subir_evidencia:', traceback.format_exc(), flush=True)
-            return Response({'error': f'{type(exc).__name__}: {exc}'[:300]}, status=500)
-
-    @action(detail=True, methods=['get'], url_path=r'evidencia/(?P<eid>\d+)')
-    def evidencia_archivo(self, request, pk=None, eid=None):
-        """Descarga una evidencia. Pasa por get_object(), así que el cliente solo
-        puede ver las de sus propios tickets."""
-        ticket = self.get_object()
-        try:
-            ev = ticket.evidencias.get(pk=eid)
-            return FileResponse(ev.archivo.open('rb'), filename=ev.nombre_original)
-        except (EvidenciaTicket.DoesNotExist, FileNotFoundError, ValueError):
-            raise Http404
-
-    @action(detail=True, methods=['post'])
-    def solicitar_finalizacion(self, request, pk=None):
-        """Coordinador/Admin pide al cliente confirmar que el servicio ya puede finalizarse."""
-        ticket = self.get_object()
-        if request.user.rol != 'coordinador' or ticket.coordinador_id != request.user.id:
-            return Response({'error': 'Solo el coordinador asignado puede solicitar la finalización.'}, status=403)
-        if ticket.estatus == 'terminado':
-            return Response({'error': 'El servicio ya está finalizado.'}, status=400)
-        if not ticket.cliente_id:
-            return Response({'error': 'Este ticket no tiene cliente asignado; finalízalo desde la edición.'}, status=400)
-        ticket.finalizacion_solicitada = True
-        ticket.save(update_fields=['finalizacion_solicitada'])
-        ComentarioTicket.objects.create(
-            ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-            texto=f'{request.user.nombre_completo} solicitó finalizar el servicio. Esperando confirmación del cliente.',
-            es_cambio_estatus=True,
+        Notificacion.objects.create(
+            destinatario=self.cli, titulo='Respuesta', mensaje='Uno',
+            tipo='comentario', referencia_id=ticket.id,
         )
         Notificacion.objects.create(
-            destinatario=ticket.cliente,
-            titulo=f'¿Ya podemos finalizar tu servicio {ticket.etiqueta}?',
-            mensaje='Tu coordinador solicita finalizar el servicio. Entra a tu bitácora y confirma si se finaliza o no.',
-            tipo='finalizacion_solicitada', referencia_id=ticket.id,
+            destinatario=self.cli, titulo='Respuesta', mensaje='Dos',
+            tipo='comentario', referencia_id=ticket.id,
         )
-        return Response(TicketSerializer(ticket, context={'request': request}).data)
-
-    @action(detail=True, methods=['post'])
-    def responder_finalizacion(self, request, pk=None):
-        """El Cliente decide si el servicio se finaliza (acepta=true) o sigue abierto (acepta=false)."""
-        ticket = self.get_object()
-        if request.user.rol != 'cliente' or ticket.cliente_id != request.user.id:
-            return Response({'error': 'Solo el cliente del servicio puede responder.'}, status=403)
-        if not ticket.finalizacion_solicitada:
-            return Response({'error': 'No hay una solicitud de finalización pendiente.'}, status=400)
-        acepta = request.data.get('acepta') in (True, 'true', 'True', 1, '1')
-        ticket.finalizacion_solicitada = False
-        if acepta:
-            anterior = ticket.estatus
-            ticket.estatus = 'terminado'
-            ticket.save(update_fields=['finalizacion_solicitada', 'estatus'])
-            ComentarioTicket.objects.create(
-                ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-                texto=f'El cliente confirmó la finalización. Estatus cambiado de "{dict(Ticket.ESTATUS_CHOICES).get(anterior, anterior)}" a "Finalizado"',
-                es_cambio_estatus=True, estatus_anterior=anterior, estatus_nuevo='terminado',
-            )
-            texto_notif = f'{request.user.nombre_completo} confirmó la finalización del ticket {ticket.etiqueta}.'
-            al_finalizar(ticket)
-        else:
-            ticket.save(update_fields=['finalizacion_solicitada'])
-            ComentarioTicket.objects.create(
-                ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
-                texto='El cliente indicó que el servicio aún NO debe finalizarse.',
-                es_cambio_estatus=True,
-            )
-            texto_notif = f'{request.user.nombre_completo} indicó que el ticket {ticket.etiqueta} aún no debe finalizarse.'
-        if ticket.coordinador_id:
-            Notificacion.objects.create(
-                destinatario=ticket.coordinador,
-                titulo=f'Respuesta de finalización — {ticket.etiqueta}',
-                mensaje=texto_notif, tipo='cambio_estatus', referencia_id=ticket.id,
-            )
-        if acepta:
-            Notificacion.objects.filter(referencia_id=ticket.id).exclude(
-                tipo='calificar_servicio', leida=False,
-            ).update(archivada=True)
-        return Response(TicketSerializer(ticket, context={'request': request}).data)
-
-    @action(detail=True, methods=['post'])
-    def calificar(self, request, pk=None):
-        """El cliente califica de 1 a 5 al técnico de un servicio finalizado."""
-        ticket = self.get_object()
-        if request.user.rol != 'cliente' or ticket.cliente_id != request.user.id:
-            return Response({'error': 'Solo el cliente del servicio puede calificarlo.'}, status=403)
-        if ticket.estatus != 'terminado':
-            return Response({'error': 'Solo puedes calificar un servicio finalizado.'}, status=400)
-        if not ticket.tecnico_id:
-            return Response({'error': 'Este servicio no tiene un técnico asignado para calificar.'}, status=400)
-        cal_tecnico = _estrellas(request.data.get('calificacion_tecnico'))
-        if cal_tecnico is None:
-            return Response({'error': 'Califica al técnico con un número de estrellas entre 1 y 5.'}, status=400)
-        comentario = (request.data.get('comentario') or '').strip()[:1000]
-
-        with transaction.atomic():
-            ticket = Ticket.objects.select_for_update().get(pk=ticket.pk)
-            if Opinion.objects.filter(ticket=ticket).exists():
-                return Response({'error': 'Ya calificaste este servicio.'}, status=400)
-            tecnico = Tecnico.objects.select_for_update().get(pk=ticket.tecnico_id)
-            opinion = Opinion.objects.create(
-                tecnico=tecnico,
-                ticket=ticket,
-                nombre_autor=request.user.nombre_completo[:100],
-                calificacion=cal_tecnico,
-                comentario=comentario,
-            )
-            _actualizar_calificacion_tecnico(tecnico)
-            # Ya calificó: el aviso de la campana deja de estar pendiente
-            Notificacion.objects.filter(destinatario=request.user, tipo='calificar_servicio',
-                                        referencia_id=ticket.id, leida=False).update(leida=True)
-        return Response(OpinionSerializer(opinion).data, status=201)
-
-    @action(detail=False, methods=['get'])
-    def pendientes_calificar(self, request):
-        """Servicios finalizados (últimos 30 días) que el cliente todavía no califica.
-        El frontend lo consulta cada 30 s para mostrarle la ventana de calificación."""
-        if request.user.rol != 'cliente':
-            return Response([])
-        desde = timezone.now() - timedelta(days=30)
-        qs = (Ticket.objects.filter(cliente=request.user, eliminado=False, estatus='terminado',
-                                    tecnico__isnull=False,
-                                    fecha_finalizacion__gte=desde, opinion__isnull=True)
-              .select_related('tecnico').order_by('fecha_finalizacion'))
-        return Response([{
-            'id': t.id, 'ticket_id': t.etiqueta,
-            'tecnico_id': t.tecnico_id, 'tecnico_nombre': t.tecnico.nombre if t.tecnico_id else None,
-            'tipo_unidad': t.tipo_unidad, 'unidad': t.unidad, 'lugar': t.lugar,
-            'fecha_finalizacion': t.fecha_finalizacion,
-        } for t in qs])
-
-    @action(detail=True, methods=['get'])
-    def pdf(self, request, pk=None):
-        """Genera un comprobante de servicio en PDF para el ticket."""
-        ticket = self.get_object()
-        return generar_pdf_ticket(ticket)
-
-    @action(detail=False, methods=['get'])
-    def dashboard_cliente(self, request):
-        user = request.user
-        tickets = _con_mensajes_no_leidos(Ticket.objects.filter(cliente=user), user)
-        return Response({
-            'en_curso': tickets.filter(estatus__in=['pendiente', 'atendido', 'proceso']).count(),
-            'terminados': tickets.filter(estatus='terminado').count(),
-            'pagos_pendientes': tickets.filter(estatus_factura='pendiente').count(),
-            'total': tickets.count(),
-            'recientes': TicketSerializer(tickets, many=True, context={'request': request}).data,
-        })
-
-    @action(detail=False, methods=['get'])
-    def dashboard_coordinador(self, request):
-        user = request.user
-        # Mismos tickets que ve en su bitácora: los suyos + los recién solicitados que aún no
-        # tienen coordinador (si no, un servicio nuevo no se vería hasta que alguien lo tome).
-        # Los eliminados (papelera) no cuentan.
-        tickets = _con_mensajes_no_leidos(
-            Ticket.objects.filter(Q(coordinador=user) | Q(coordinador__isnull=True), eliminado=False),
-            user,
+        Notificacion.objects.create(
+            destinatario=self.cli2, titulo='Respuesta', mensaje='Otro cliente',
+            tipo='comentario', referencia_id=otro_ticket.id,
         )
-        return Response({
-            'en_proceso': tickets.filter(estatus='proceso').count(),
-            'pendientes': tickets.filter(estatus__in=['pendiente', 'atendido']).count(),
-            'terminados': tickets.filter(estatus='terminado').count(),
-            'ganancias_hoy': 0,
-            'tickets': TicketSerializer(tickets, many=True, context={'request': request}).data,
-        })
-
-    @action(detail=False, methods=['get'])
-    def dashboard_admin(self, request):
-        tickets = Ticket.objects.filter(eliminado=False)
-        total_ingresos = sum(float(t.total) for t in tickets)
-        total_ganancia = sum(float(t.ganancia) for t in tickets)
-        total_iva = sum(float(t.iva) for t in tickets)
-        total_comision = sum(float(t.comision) for t in tickets)
-        total_costo = sum(float(t.costo) for t in tickets)
-        from collections import defaultdict
-        empresas = defaultdict(float)
-        for t in tickets:
-            empresas[t.empresa] += float(t.total)
-        top_empresas = sorted(empresas.items(), key=lambda x: -x[1])[:5]
-
-        # Rendimiento por técnico: cuántos tickets, ganancia generada y calificación promedio
-        tecnicos_stats = defaultdict(lambda: {'tickets': 0, 'ganancia': 0.0, 'calificaciones': []})
-        for t in tickets.filter(tecnico__isnull=False):
-            key = t.tecnico.nombre
-            tecnicos_stats[key]['tickets'] += 1
-            tecnicos_stats[key]['ganancia'] += float(t.ganancia)
-        for op in Opinion.objects.filter(tecnico__isnull=False, calificacion__isnull=False):
-            tecnicos_stats[op.tecnico.nombre]['calificaciones'].append(op.calificacion)
-        tickets_por_tecnico = [{
-            'tecnico': nombre,
-            'tickets': s['tickets'],
-            'ganancia': s['ganancia'],
-            'calificacion_promedio': round(sum(s['calificaciones']) / len(s['calificaciones']), 1) if s['calificaciones'] else None,
-        } for nombre, s in sorted(tecnicos_stats.items(), key=lambda x: -x[1]['tickets'])]
-
-        return Response({
-            'ingresos_totales': total_ingresos,
-            'ganancia_total': total_ganancia,
-            'iva_acumulado': total_iva,
-            'comisiones': total_comision,
-            'costo_total': total_costo,
-            'servicios_terminados': tickets.filter(estatus='terminado').count(),
-            'en_proceso': tickets.filter(estatus='proceso').count(),
-            'pendientes': tickets.filter(estatus__in=['pendiente', 'atendido']).count(),
-            'facturas_pagadas': tickets.filter(estatus_factura='pagada').count(),
-            'facturas_pendientes': tickets.filter(estatus_factura='pendiente').count(),
-            'top_empresas': [{'empresa': e, 'total': t} for e, t in top_empresas],
-            'tickets_por_tecnico': tickets_por_tecnico,
-        })
-
-    @action(detail=True, methods=['post'])
-    def permitir_edicion_coordinador(self, request, pk=None):
-        """El Administrador activa/desactiva el permiso para que el Coordinador
-        pueda editar un ticket ya cerrado (terminado)."""
-        if request.user.rol != 'admin':
-            return Response({'error': 'Solo el Administrador puede otorgar este permiso.'}, status=403)
-        ticket = self.get_object()
-        activar = request.data.get('activar', True)
-        ticket.puede_editar_coordinador = bool(activar)
-        ticket.save(update_fields=['puede_editar_coordinador'])
-        return Response({'puede_editar_coordinador': ticket.puede_editar_coordinador,
-                         'ticket_id': ticket.etiqueta})
-
-    @action(detail=False, methods=['get'])
-    def corte_mensual(self, request):
-        tickets = Ticket.objects.all()
-        meses = {}
-        for t in tickets:
-            key = t.fecha.strftime('%B De %Y').capitalize()
-            if key not in meses:
-                meses[key] = {'mes': key, 'tickets': 0, 'total': 0, 'ganancia': 0, 'iva': 0, 'comision': 0}
-            meses[key]['tickets'] += 1
-            meses[key]['total'] += float(t.total)
-            meses[key]['ganancia'] += float(t.ganancia)
-            meses[key]['iva'] += float(t.iva)
-            meses[key]['comision'] += float(t.comision)
-        return Response(list(meses.values()))
-
-    @action(detail=False, methods=['get'])
-    def exportar_excel(self, request):
-        """Exporta a un archivo .xlsx la Bitácora, respetando los mismos
-        filtros visibles en la tabla (empresa, estatus, tipo, búsqueda)."""
-        if request.user.rol not in ('admin', 'coordinador'):
-            return Response({'error': 'No tienes permiso para exportar.'}, status=403)
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill
-
-        qs = self.get_queryset()
-        estatus = request.query_params.get('estatus')
-        tipo = request.query_params.get('tipo')
-        busqueda = (request.query_params.get('busqueda') or '').lower()
-        empresas_param = request.query_params.get('empresas')  # separadas por coma
-
-        if estatus:
-            qs = qs.filter(estatus=estatus)
-        if tipo and tipo != 'todos':
-            qs = qs.filter(tipo_solicitud=tipo)
-        if empresas_param:
-            lista_empresas = [e for e in empresas_param.split(',') if e]
-            qs = qs.filter(empresa__in=lista_empresas)
-        if busqueda:
-            from django.db.models import Q
-            qs = qs.filter(Q(ticket_id__icontains=busqueda) | Q(empresa__icontains=busqueda) | Q(unidad__icontains=busqueda))
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Bitácora'
-        encabezados = ['Ticket', 'Empresa', 'Fecha', 'Estatus', 'Tipo Unidad', 'Unidad', 'Lugar',
-                       'Técnico', 'Coordinador', 'Reparación', 'Costo', 'Ganancia', 'Total', 'IVA',
-                       'Total Final', 'Factura', 'Estatus Factura']
-        ws.append(encabezados)
-        for cell in ws[1]:
-            cell.font = Font(bold=True, color='FFFFFF')
-            cell.fill = PatternFill(start_color='111111', end_color='111111', fill_type='solid')
-
-        for t in qs:
-            ws.append([
-                t.etiqueta, t.empresa, str(t.fecha), t.get_estatus_display(),
-                t.tipo_unidad, t.unidad, t.lugar,
-                t.tecnico.nombre if t.tecnico else '', t.coordinador.nombre_completo if t.coordinador else '',
-                t.reparacion, float(t.costo), float(t.ganancia), float(t.total), float(t.iva),
-                float(t.total_f), t.factura, t.estatus_factura,
-            ])
-
-        for col in ws.columns:
-            longitud = max((len(str(c.value)) for c in col if c.value is not None), default=10)
-            ws.column_dimensions[col[0].column_letter].width = min(40, longitud + 2)
-
-        buffer = io.BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
-        response = HttpResponse(
-            buffer.getvalue(),
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-        response['Content-Disposition'] = 'attachment; filename="bitacora_tallerdiesel.xlsx"'
-        return response
-
-
-# ── Técnicos ──────────────────────────────────────────────────────────────────
-
-class TecnicoViewSet(viewsets.ModelViewSet):
-    queryset = _con_resumen_calificaciones(Tecnico.objects.filter(activo=True))
-    serializer_class = TecnicoSerializer
-    permission_classes = [LecturaPublicaEdicionConPermiso]
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        from django.db.models import Q
-        categoria = self.request.query_params.get('categoria')
-        ciudad = self.request.query_params.get('ciudad')
-        if categoria:
-            qs = qs.filter(categoria=categoria)
-        if ciudad:
-            qs = qs.filter(Q(ciudad__icontains=ciudad) | Q(estado__icontains=ciudad))
-        return qs
-
-    @action(detail=False, methods=['get'])
-    def plantilla_excel(self, request):
-        """Descarga una plantilla de Excel con las columnas correctas para importar técnicos."""
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'Tecnicos'
-        headers = ['nombre', 'categoria', 'ciudad', 'estado', 'direccion', 'telefono', 'latitud', 'longitud', 'descripcion', 'disponible']
-        ws.append(headers)
-        ws.append(['Juan Pérez', 'motor_diesel', 'Monterrey', 'Nuevo León', 'Av. Constitución 100',
-                   '8121234567', 25.6866, -100.3161, 'Ejemplo de descripción', 'si'])
-        ws2 = wb.create_sheet('Categorías válidas')
-        ws2.append(['valor (usar este texto en la columna "categoria")', 'significa'])
-        for val, label in Tecnico.CATEGORIA_CHOICES:
-            ws2.append([val, label])
-        for col in ws.columns:
-            ws.column_dimensions[col[0].column_letter].width = 22
-        for col in ws2.columns:
-            ws2.column_dimensions[col[0].column_letter].width = 45
-
-        response = HttpResponse(
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        response['Content-Disposition'] = 'attachment; filename="plantilla_tecnicos.xlsx"'
-        wb.save(response)
-        return response
-
-    @action(detail=False, methods=['post'])
-    def importar_excel(self, request):
-        """Importa técnicos desde un archivo Excel.
-        modo='reemplazar' borra todos los técnicos actuales antes de importar.
-        modo='agregar' (default) solo agrega/actualiza por nombre.
-        """
-        archivo = request.FILES.get('archivo')
-        if not archivo:
-            return Response({'error': 'Sube un archivo Excel (.xlsx).'}, status=400)
-        modo = request.data.get('modo', 'agregar')
-
-        try:
-            wb = load_workbook(archivo, data_only=True)
-            ws = wb.worksheets[0]
-        except Exception as e:
-            return Response({'error': f'No se pudo leer el archivo. Asegúrate de que sea un .xlsx válido. ({e})'}, status=400)
-
-        filas = list(ws.iter_rows(min_row=2, values_only=True))
-        categorias_validas = dict(Tecnico.CATEGORIA_CHOICES)
-        creados, errores = [], []
-
-        with transaction.atomic():
-            if modo == 'reemplazar':
-                Tecnico.objects.all().delete()
-
-            for i, fila in enumerate(filas, start=2):
-                if not fila or all(c is None or str(c).strip() == '' for c in fila):
-                    continue  # fila vacía, se ignora
-                try:
-                    datos = (list(fila) + [None] * 10)[:10]
-                    nombre, categoria, ciudad, estado, direccion, telefono, latitud, longitud, descripcion, disponible = datos
-                    if not nombre or not categoria or not ciudad or not estado or not telefono or latitud is None or longitud is None:
-                        errores.append(f'Fila {i}: faltan datos obligatorios (nombre, categoria, ciudad, estado, telefono, latitud, longitud).')
-                        continue
-                    categoria = str(categoria).strip()
-                    if categoria not in categorias_validas:
-                        errores.append(f'Fila {i}: categoría "{categoria}" no es válida. Usa una de: {", ".join(categorias_validas.keys())}.')
-                        continue
-                    disp_txt = str(disponible).strip().lower() if disponible is not None else 'si'
-                    disponible_bool = disp_txt not in ('no', 'false', '0', 'ocupado')
-                    tecnico, _ = Tecnico.objects.update_or_create(
-                        nombre=str(nombre).strip(),
-                        defaults=dict(
-                            categoria=categoria,
-                            ciudad=str(ciudad).strip(),
-                            estado=str(estado).strip(),
-                            direccion=str(direccion).strip() if direccion else '',
-                            telefono=str(telefono).strip(),
-                            latitud=float(latitud),
-                            longitud=float(longitud),
-                            descripcion=str(descripcion).strip() if descripcion else '',
-                            disponible=disponible_bool,
-                            activo=True,
-                        )
-                    )
-                    creados.append(tecnico.nombre)
-                except Exception as e:
-                    errores.append(f'Fila {i}: {e}')
-
-        return Response({
-            'importados': len(creados),
-            'nombres': creados,
-            'errores': errores,
-            'modo': modo,
-            'total_tecnicos': Tecnico.objects.filter(activo=True).count(),
-        }, status=201 if creados or not errores else 400)
-
-    @action(detail=True, methods=['post'])
-    def actualizar_disponibilidad(self, request, pk=None):
-        """El técnico o admin puede actualizar su disponibilidad."""
-        tecnico = self.get_object()
-        disponible = request.data.get('disponible')
-        if disponible is None:
-            return Response({'error': 'Campo disponible requerido.'}, status=400)
-        tecnico.disponible = bool(disponible)
-        tecnico.save(update_fields=['disponible'])
-        return Response({'disponible': tecnico.disponible, 'nombre': tecnico.nombre})
-
-    @action(detail=True, methods=['post'], permission_classes=[AllowAny])
-    def agregar_opinion(self, request, pk=None):
-        tecnico = self.get_object()
-        calificacion = _estrellas(request.data.get('calificacion'))
-        if calificacion is None:
-            return Response({'calificacion': ['Usa un número de estrellas entre 1 y 5.']}, status=400)
-        serializer = OpinionSerializer(data={
-            'nombre_autor': request.data.get('nombre_autor'),
-            'calificacion': calificacion,
-            'comentario': request.data.get('comentario', ''),
-        })
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=400)
-        with transaction.atomic():
-            tecnico = Tecnico.objects.select_for_update().get(pk=tecnico.pk)
-            opinion = serializer.save(tecnico=tecnico, ticket=None, calificacion_servicio=None)
-            _actualizar_calificacion_tecnico(tecnico)
-        return Response(OpinionSerializer(opinion).data, status=201)
-
-
-# ── Operadores ───────────────────────────────────────────────────────────────
-
-class OperadorViewSet(viewsets.ModelViewSet):
-    queryset = Operador.objects.filter(activo=True)
-    serializer_class = OperadorSerializer
-    permission_classes = [EsAdminOPermisoEdicion]
-
-
-# ── Catálogo de unidades (flotilla) ──────────────────────────────────────────
-
-class UnidadFlotillaViewSet(viewsets.ModelViewSet):
-    """Catálogo reutilizable de unidades por usuario: evita volver a capturar
-    tipo de unidad / número cada vez que se solicita un servicio."""
-    serializer_class = UnidadFlotillaSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return UnidadFlotilla.objects.filter(propietario=self.request.user, activo=True)
-
-    def perform_create(self, serializer):
-        serializer.save(propietario=self.request.user)
-
-    def perform_destroy(self, instance):
-        # Baja lógica en vez de borrar, por si ya está referenciada en tickets pasados
-        instance.activo = False
-        instance.save(update_fields=['activo'])
-
-
-# ── Solicitud pública ─────────────────────────────────────────────────────────
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def lista_empresas(request):
-    """Devuelve las empresas únicas registradas en tickets."""
-    empresas = Ticket.objects.values_list('empresa', flat=True).distinct().order_by('empresa')
-    return Response(list(empresas))
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def crear_Operador(request):
-    """Crea un nuevo operador rápidamente desde el modal."""
-    nombre = request.data.get('nombre', '').strip()
-    if not nombre:
-        return Response({'error': 'El nombre es requerido.'}, status=400)
-    oper, created = Operador.objects.get_or_create(nombre=nombre)
-    return Response({'id': oper.id, 'nombre': oper.nombre, 'created': created}, status=201)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def solicitud_servicio(request):
-    serializer = SolicitudServicioSerializer(data=request.data)
-    if serializer.is_valid():
-        cliente_usuario = request.user if (request.user and request.user.is_authenticated) else None
-        solicitud = serializer.save(cliente=cliente_usuario)
-
-        # ── Generación automática del ticket en estado "Pendiente" ──────────
-        # El cliente nunca crea el ticket manualmente: se genera al solicitar
-        # el servicio, junto con su bitácora.
-        # Si el solicitante es coordinador, asignarlo automáticamente al ticket
-        coordinador_auto = None
-        if cliente_usuario and getattr(cliente_usuario, 'rol', None) == 'coordinador':
-            coordinador_auto = cliente_usuario
-
-        # Determinar tipo: si lo envía el coordinador o es ruta coordinador → 'coordinador', else 'tecnico'
-        tipo_sol = request.data.get('tipo_solicitud', 'coordinador')
-
-        # Si es tipo tecnico, intentar obtener el tecnico por su ID
-        tecnico_obj = None
-        if tipo_sol == 'tecnico':
-            tecnico_id = request.data.get('tecnico_id')
-            if tecnico_id:
-                try:
-                    from .models import Tecnico
-                    tecnico_obj = Tecnico.objects.get(pk=tecnico_id)
-                except Exception:
-                    pass
-
-        ticket = Ticket.objects.create(
-            empresa=solicitud.empresa or (cliente_usuario.empresa if cliente_usuario else '') or solicitud.nombre_completo,
-            fecha=date.today(),
-            estatus='pendiente',
-            tipo_unidad=solicitud.tipo_unidad or '',
-            unidad=solicitud.unidad or '—',
-            lugar=solicitud.lugar,
-            operador=solicitud.nombre_completo,
-            reparacion=solicitud.problema,
-            cliente=cliente_usuario,
-            coordinador=coordinador_auto,
-            tipo_solicitud=tipo_sol,
-            tecnico=tecnico_obj,
-        )
-        solicitud.ticket = ticket
-        solicitud.save(update_fields=['ticket'])
-        ComentarioTicket.objects.create(
-            ticket=ticket,
-            autor=cliente_usuario,
-            autor_nombre=solicitud.nombre_completo,
-            texto='Ticket generado automáticamente a partir de la solicitud de servicio.',
+        aviso_coordinador = Notificacion.objects.create(
+            destinatario=self.carlo, titulo='Mensaje cliente', mensaje='Para el coordinador',
+            tipo='comentario', referencia_id=ticket.id,
         )
 
-        # Reparto automático: el ticket nuevo le toca al coordinador libre que primero terminó un servicio o,
-        # si no hay, al siguiente por número (1, 2, 3…). Al asignarse recibe su folio (TD027, TD028…).
-        if ticket.coordinador_id is None:
-            asignar_coordinador_automatico(ticket)
-            ticket.refresh_from_db()
+        dashboard_cliente = self._con(self.cli).get('/api/tickets/dashboard_cliente/').data
+        self.assertEqual(
+            next(t for t in dashboard_cliente['recientes'] if t['id'] == ticket.id)['mensajes_no_leidos'],
+            2,
+        )
+        dashboard_coordinador = self._con(self.carlo).get('/api/tickets/dashboard_coordinador/').data
+        self.assertEqual(
+            next(t for t in dashboard_coordinador['tickets'] if t['id'] == ticket.id)['mensajes_no_leidos'],
+            1,
+        )
 
-        # Notificar a coordinadores y admins (campana + correo)
-        destinatarios = User.objects.filter(rol__in=['coordinador', 'admin'], is_active=True)
-        emails_destino = [d.email for d in destinatarios if d.email]
+        respuesta = self._con(self.cli).post(f'/api/tickets/{ticket.id}/marcar-mensajes-leidos/')
 
-        # El correo de la empresa siempre debe recibir la solicitud de coordinador
-        correo_empresa = settings.EMAIL_EMPRESA
-        if correo_empresa not in emails_destino:
-            emails_destino.append(correo_empresa)
-        emails_destino = _correos_unicos(emails_destino)   # coordinadores con el mismo correo: un solo envío
+        self.assertEqual(respuesta.status_code, 200, respuesta.data)
+        self.assertEqual(respuesta.data['marcados'], 2)
+        self.assertFalse(Notificacion.objects.filter(
+            destinatario=self.cli, referencia_id=ticket.id, tipo='comentario', leida=False,
+        ).exists())
+        aviso_coordinador.refresh_from_db()
+        self.assertFalse(aviso_coordinador.leida)
+        restante_response = self._con(self.carlo).get('/api/tickets/').data
+        restante = restante_response.get('results', restante_response)
+        self.assertEqual(
+            next(t for t in restante if t['id'] == ticket.id)['mensajes_no_leidos'],
+            1,
+        )
 
-        for dest in destinatarios:
-            Notificacion.objects.create(
-                destinatario=dest,
-                titulo='Nueva solicitud de servicio',
-                mensaje=f'{solicitud.nombre_completo} ({solicitud.empresa or "Sin empresa"}) necesita ayuda: {solicitud.problema[:80]}...',
-                tipo='solicitud',
-                referencia_id=ticket.id,
-            )
+    def test_la_revision_de_sla_corre_a_lo_mucho_una_vez_por_segundo(self):
+        from unittest import mock
+        with mock.patch('tallerdiesel_api.views.revisar_alertas_sla') as sla:
+            c = self._con(self.carlo)
+            for _ in range(5):
+                c.get('/api/notificaciones/')
+            self.assertEqual(sla.call_count, 1)
 
-        # Correo a coordinadores y admins
-        if emails_destino:
-            tipo_display = 'TÉCNICO' if tipo_sol == 'tecnico' else 'COORDINADOR'
-            asunto_interno = f'🔧 Nueva solicitud de {tipo_display} — {solicitud.nombre_completo}'
-            texto_plano = (
-                f'Se recibió una nueva solicitud de tipo "{tipo_display}":\n\n'
-                f'Nombre:   {solicitud.nombre_completo}\n'
-                f'Teléfono: {solicitud.telefono}\n'
-                f'Empresa:  {solicitud.empresa or "No especificada"}\n'
-                f'Problema: {solicitud.problema}\n\n'
-                f'Ticket generado: {ticket.etiqueta}\n\n'
-                f'Ingresa al sistema: {settings.FRONTEND_URL}/coordinador/dashboard'
-            )
-            html_body = email_nueva_solicitud(
-                tipo_display=tipo_display,
-                nombre=solicitud.nombre_completo,
-                telefono=solicitud.telefono,
-                empresa=solicitud.empresa,
-                problema=solicitud.problema,
-                lugar=solicitud.lugar,
-                tipo_unidad=solicitud.tipo_unidad,
-                unidad=solicitud.unidad,
-                tecnico_nombre=tecnico_obj.nombre if tecnico_obj else '',
-                ticket_id=ticket.etiqueta,
-                fecha_str=solicitud.fecha.strftime('%d/%m/%Y %H:%M'),
-                url_dashboard=f'{settings.FRONTEND_URL}/coordinador/dashboard',
-            )
-            enviar_html(asunto_interno, emails_destino, html_body, texto_plano)
+    def test_sla_avisa_al_coordinador_tras_cinco_segundos_pendiente(self):
+        from tallerdiesel_api.views import revisar_alertas_sla
 
-        # Correo de confirmación al cliente
-        if solicitud.nombre_completo and solicitud.telefono:
-            # Buscar si el usuario tiene correo registrado
-            cliente_email = None
-            if request.user and request.user.is_authenticated and request.user.email:
-                cliente_email = request.user.email
+        ticket = self._solicitud(cliente=self.cli2, coordinador=self.carlo, estatus='pendiente')
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_creacion=timezone.now() - timedelta(seconds=6),
+        )
 
-            if cliente_email:
-                asunto_cliente = '✅ TallerDiesel — Recibimos tu solicitud'
-                texto_plano = (
-                    f'Hola {solicitud.nombre_completo},\n\n'
-                    f'Recibimos tu solicitud de auxilio carretero. Un coordinador se pondrá en contacto contigo '
-                    f'en menos de 5 minutos.\n\n'
-                    f'Empresa:  {solicitud.empresa or "No especificada"}\n'
-                    f'Problema: {solicitud.problema}\n\n'
-                    f'Gracias por confiar en TallerDiesel — Auxilio Carretero.\n'
-                )
-                html_body = email_confirmacion_cliente(
-                    nombre=solicitud.nombre_completo,
-                    empresa=solicitud.empresa,
-                    problema=solicitud.problema,
-                )
-                enviar_html(asunto_cliente, [cliente_email], html_body, texto_plano)
-
-        return Response({
-            'mensaje': 'Solicitud recibida. Te contactaremos en menos de 5 minutos.',
-            'ticket_id': ticket.etiqueta,
-            'id': ticket.id,
-        }, status=201)
-    return Response(serializer.errors, status=400)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def solicitudes_pendientes(request):
-    solicitudes = SolicitudServicio.objects.filter(atendida=False).order_by('-fecha')
-    return Response(SolicitudServicioSerializer(solicitudes, many=True).data)
-
-
-@api_view(['PATCH'])
-@permission_classes([IsAuthenticated])
-def marcar_solicitud_atendida(request, pk):
-    try:
-        solicitud = SolicitudServicio.objects.get(pk=pk)
-        solicitud.atendida = True
-        solicitud.save()
-        return Response({'mensaje': 'Marcada como atendida.'})
-    except SolicitudServicio.DoesNotExist:
-        return Response({'error': 'No encontrada.'}, status=404)
-
-
-# ── Notificaciones ────────────────────────────────────────────────────────────
-
-SLA_SEGUNDOS_PENDIENTE = 5
-
-
-def revisar_alertas_sla():
-    """Notifica tickets pendientes y mensajes de cliente que esperan respuesta más de 5 s."""
-    limite = timezone.now() - timedelta(seconds=SLA_SEGUNDOS_PENDIENTE)
-    atrasados = Ticket.objects.filter(
-        estatus='pendiente', alerta_sla_enviada=False, fecha_creacion__lt=limite
-    )
-    for t in atrasados:
-        if t.coordinador_id:
-            destinatarios = [t.coordinador]
-        else:
-            destinatarios = list(User.objects.filter(rol='admin', is_active=True))
-        for u in destinatarios:
-            Notificacion.objects.create(
-                destinatario=u,
-                titulo=f'⏰ SLA: Ticket {t.etiqueta} sin atender',
-                mensaje=f'El servicio {t.etiqueta} de {t.empresa} lleva más de {SLA_SEGUNDOS_PENDIENTE} segundos "Pendiente" sin asignar técnico.',
-                tipo='alerta_sla',
-                referencia_id=t.id,
-            )
-        t.alerta_sla_enviada = True
-        t.save(update_fields=['alerta_sla_enviada'])
-
-    respuestas_pendientes = Ticket.objects.filter(
-        fecha_ultimo_mensaje_cliente__lt=limite,
-        alerta_respuesta_sla_enviada=False,
-    ).filter(
-        Q(fecha_ultima_respuesta_coordinador__isnull=True)
-        | Q(fecha_ultima_respuesta_coordinador__lt=F('fecha_ultimo_mensaje_cliente'))
-    ).select_related('coordinador')
-    for ticket in respuestas_pendientes:
-        if ticket.coordinador_id:
-            destinatarios = [ticket.coordinador]
-        else:
-            destinatarios = list(User.objects.filter(rol='admin', is_active=True))
-        for usuario in destinatarios:
-            Notificacion.objects.create(
-                destinatario=usuario,
-                titulo=f'⏰ SLA: respuesta pendiente — Ticket {ticket.etiqueta}',
-                mensaje=(
-                    f'El cliente lleva más de {SLA_SEGUNDOS_PENDIENTE} segundos esperando '
-                    f'respuesta en el ticket {ticket.etiqueta}.'
-                ),
-                tipo='alerta_respuesta_sla',
-                referencia_id=ticket.id,
-            )
-        ticket.alerta_respuesta_sla_enviada = True
-        ticket.save(update_fields=['alerta_respuesta_sla_enviada'])
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def mis_notificaciones(request):
-    """Se consulta cada segundo desde el navegador. La revisión de SLA corre como máximo una vez por
-    segundo y se devuelven las 200 notificaciones más recientes. Las notificaciones
-    viven en la base de datos: siguen ahí aunque la persona cierre sesión."""
-    from django.core.cache import cache
-    if request.user.rol in ('admin', 'coordinador') and cache.add('sla_revisado', True, timeout=1):
         revisar_alertas_sla()
-    archivadas = request.query_params.get('archivadas') == 'true'
-    notifs = Notificacion.objects.filter(
-        destinatario=request.user, archivada=archivadas,
-    ).order_by('-fecha', '-id')[:200]
-    return Response(NotificacionSerializer(notifs, many=True).data)
+
+        aviso = Notificacion.objects.get(destinatario=self.carlo, tipo='alerta_sla', referencia_id=ticket.id)
+        self.assertIn('más de 5 segundos', aviso.mensaje)
+        ticket.refresh_from_db()
+        self.assertTrue(ticket.alerta_sla_enviada)
+
+    def test_sla_no_avisa_antes_de_cinco_segundos(self):
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli2, coordinador=self.carlo, estatus='pendiente')
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_creacion=timezone.now() - timedelta(seconds=4),
+        )
+
+        revisar_alertas_sla()
+
+        self.assertFalse(Notificacion.objects.filter(
+            destinatario=self.carlo, tipo='alerta_sla', referencia_id=ticket.id,
+        ).exists())
+
+    def test_sla_avisa_si_cliente_espera_mas_de_cinco_segundos_respuesta(self):
+        from unittest import mock
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        with mock.patch('tallerdiesel_api.views._enviar_html_en_segundo_plano'):
+            respuesta = self._con(self.cli).post(
+                f'/api/tickets/{ticket.id}/agregar_comentario/',
+                {'texto': '¿Hay novedades?'},
+                format='json',
+            )
+        self.assertEqual(respuesta.status_code, 201, respuesta.data)
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_ultimo_mensaje_cliente=timezone.now() - timedelta(seconds=6),
+        )
+
+        revisar_alertas_sla()
+
+        aviso = Notificacion.objects.get(
+            destinatario=self.carlo, tipo='alerta_respuesta_sla', referencia_id=ticket.id,
+        )
+        self.assertIn('más de 5 segundos', aviso.mensaje)
+        ticket.refresh_from_db()
+        self.assertTrue(ticket.alerta_respuesta_sla_enviada)
+
+    def test_respuesta_del_coordinador_cierra_el_tiempo_de_espera(self):
+        from unittest import mock
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        with mock.patch('tallerdiesel_api.views._enviar_html_en_segundo_plano'):
+            self.assertEqual(
+                self._con(self.cli).post(
+                    f'/api/tickets/{ticket.id}/agregar_comentario/',
+                    {'texto': '¿Hay novedades?'},
+                    format='json',
+                ).status_code,
+                201,
+            )
+            self.assertEqual(
+                self._con(self.carlo).post(
+                    f'/api/tickets/{ticket.id}/agregar_comentario/',
+                    {'texto': 'Ya estamos revisando el caso.'},
+                    format='json',
+                ).status_code,
+                201,
+            )
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_ultimo_mensaje_cliente=timezone.now() - timedelta(seconds=6),
+        )
+
+        revisar_alertas_sla()
+
+        self.assertFalse(Notificacion.objects.filter(
+            destinatario=self.carlo, tipo='alerta_respuesta_sla', referencia_id=ticket.id,
+        ).exists())
+        ticket.refresh_from_db()
+        self.assertGreaterEqual(
+            ticket.fecha_ultima_respuesta_coordinador,
+            ticket.fecha_ultimo_mensaje_cliente,
+        )
+
+    def test_nuevo_mensaje_del_cliente_reinicia_el_sla_de_respuesta(self):
+        from unittest import mock
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        endpoint = f'/api/tickets/{ticket.id}/agregar_comentario/'
+        cliente = self._con(self.cli)
+        with mock.patch('tallerdiesel_api.views._enviar_html_en_segundo_plano'):
+            self.assertEqual(
+                cliente.post(endpoint, {'texto': 'Primer mensaje'}, format='json').status_code,
+                201,
+            )
+            ticket.refresh_from_db()
+            primer_mensaje = ticket.fecha_ultimo_mensaje_cliente
+            Ticket.objects.filter(pk=ticket.pk).update(
+                fecha_ultimo_mensaje_cliente=timezone.now() - timedelta(seconds=6),
+            )
+            revisar_alertas_sla()
+            self.assertEqual(
+                cliente.post(endpoint, {'texto': 'Agrego un dato más'}, format='json').status_code,
+                201,
+            )
+
+        ticket.refresh_from_db()
+        self.assertFalse(ticket.alerta_respuesta_sla_enviada)
+        self.assertIsNone(ticket.fecha_ultima_respuesta_coordinador)
+        self.assertGreater(ticket.fecha_ultimo_mensaje_cliente, primer_mensaje)
+
+    def test_la_nueva_solicitud_avisa_a_coordinadores_y_abre_el_ticket(self):
+        self.client.force_authenticate(self.cli)
+        r = self.client.post('/api/solicitud/', {'nombre_completo': 'Juan', 'telefono': '1', 'empresa': 'ACME',
+                             'problema': 'No enciende', 'lugar': 'Capulin', 'unidad': 'U9', 'tipo_unidad': 'Tracto'}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        t = Ticket.objects.get(unidad='U9')
+        self.assertEqual((t.coordinador, t.ticket_id), (self.carlo, 'TD001'))   # se asigna solo al coordinador 1, con folio
+        n = Notificacion.objects.get(destinatario=self.carlo, tipo='solicitud')
+        self.assertEqual(n.referencia_id, t.id)                       # la campana abre ESTE ticket
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.carlo, tipo='ticket_asignado', referencia_id=t.id).exists())
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def restaurar_notificacion(request, pk):
-    try:
-        notif = Notificacion.objects.get(pk=pk, destinatario=request.user)
-        notif.archivada = False
-        notif.save(update_fields=['archivada'])
-        return Response({'ok': True})
-    except Notificacion.DoesNotExist:
-        return Response({'error': 'No encontrada.'}, status=404)
+class ReasignarTecnicoMapaTests(BaseTickets):
+    """8. Reasignar técnico desde el mapa: asignación y geolocalización."""
+
+    def setUp(self):
+        super().setUp()
+        self.t = self._solicitud(coordinador=self.carlo, estatus='proceso', tecnico=self.tec2)
+
+    def test_tecnicos_cercanos_ordenados_por_distancia_con_calificacion_y_disponibilidad(self):
+        r = self._con(self.carlo).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/', {'lat': 25.67, 'lng': -100.31})
+        self.assertEqual(r.status_code, 200, r.data)
+        nombres = [x['nombre'] for x in r.data['tecnicos']]
+        self.assertEqual(nombres, ['Cerca', 'Lejos', 'Ocupado'][:0] or ['Cerca', 'Lejos', 'Ocupado'])   # disponibles primero, por distancia
+        cerca = r.data['tecnicos'][0]
+        self.assertLess(cerca['distancia_km'], 5)
+        self.assertEqual(cerca['calificacion'], 4.5)
+        self.assertIsNone(cerca['calificacion_promedio'])
+        self.assertEqual(cerca['total_calificaciones'], 0)
+        lejos = r.data['tecnicos'][1]
+        self.assertGreater(lejos['distancia_km'], 1500)
+        self.assertTrue(lejos['es_actual'])                           # el técnico que tiene ahora
+        self.assertFalse(r.data['tecnicos'][2]['disponible'])
+
+    def test_usa_la_ubicacion_guardada_del_ticket_y_sin_ubicacion_no_hay_distancias(self):
+        r = self._con(self.carlo).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/')
+        self.assertIsNone(r.data['ubicacion'])
+        self.assertTrue(all(x['distancia_km'] is None for x in r.data['tecnicos']))
+        Ticket.objects.filter(pk=self.t.pk).update(latitud=32.5, longitud=-117.0)
+        r = self._con(self.carlo).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/')
+        self.assertEqual(r.data['tecnicos'][0]['nombre'], 'Lejos')    # ahora el más cercano es el de Tijuana
+
+    def test_ubicacion_invalida_se_rechaza(self):
+        c = self._con(self.carlo)
+        self.assertEqual(c.get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/', {'lat': 'abc', 'lng': '1'}).status_code, 400)
+        self.assertEqual(c.get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/', {'lat': '95', 'lng': '1'}).status_code, 400)
+
+    def test_el_cliente_no_puede_consultar_el_mapa_de_reasignacion(self):
+        self.assertEqual(self._con(self.cli).get(f'/api/tickets/{self.t.id}/tecnicos_cercanos/').status_code, 403)
+
+    def test_reasignar_guarda_tecnico_ubicacion_historial_y_avisa_al_cliente(self):
+        r = self._con(self.carlo).post(f'/api/tickets/{self.t.id}/asignar_tecnico/',
+                                       {'tecnico_id': self.tec1.id, 'latitud': 25.67, 'longitud': -100.31}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.t.refresh_from_db()
+        self.assertEqual(self.t.tecnico, self.tec1)
+        self.assertEqual((self.t.latitud, self.t.longitud), (25.67, -100.31))
+        self.assertTrue(self.t.comentarios.filter(texto='Técnico reasignado: Lejos → Cerca').exists())
+        n = Notificacion.objects.get(destinatario=self.cli, tipo='tecnico_asignado')
+        self.assertEqual(n.titulo, 'Técnico actualizado')
+
+    def test_reasignar_con_ubicacion_invalida_no_cambia_nada(self):
+        r = self._con(self.carlo).post(f'/api/tickets/{self.t.id}/asignar_tecnico/',
+                                       {'tecnico_id': self.tec1.id, 'latitud': 'x', 'longitud': 1}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.t.refresh_from_db(); self.assertEqual(self.t.tecnico, self.tec2)
+
+    def test_solo_el_coordinador_asignado_reasigna(self):
+        body = {'tecnico_id': self.tec1.id}
+        self.assertEqual(self._con(self.karen).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 403)
+        self.assertEqual(self._con(self.admin).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 403)
+        self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 200)
+
+    def test_distancia_haversine(self):
+        from .servicios import distancia_km, coordenada_valida
+        self.assertAlmostEqual(distancia_km(25.6866, -100.3161, 25.6866, -100.3161), 0, places=3)
+        self.assertAlmostEqual(distancia_km(19.4326, -99.1332, 25.6866, -100.3161), 707, delta=15)   # CDMX → Monterrey
+        self.assertIsNone(coordenada_valida('a', 1)); self.assertIsNone(coordenada_valida(0, 181))
+        self.assertEqual(coordenada_valida('19.4', '-99.1'), (19.4, -99.1))
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def marcar_leida(request, pk):
-    try:
-        notif = Notificacion.objects.get(pk=pk, destinatario=request.user)
-        notif.leida = True
-        notif.save()
-        return Response({'ok': True})
-    except Notificacion.DoesNotExist:
-        return Response({'error': 'No encontrada.'}, status=404)
+class AsignacionAutomaticaTests(BaseTickets):
+    """Reparto automático: por número de coordinador (1, 2, 3…) y, si alguien ya finalizó, el que terminó primero."""
+
+    def _pide_servicio(self):
+        r = self.client.post('/api/solicitud/', {'nombre_completo': 'Chofer', 'telefono': '5551234567',
+                                                 'empresa': 'ACME', 'problema': 'No arranca'}, format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        return Ticket.objects.get(pk=r.data['id'])
+
+    def test_cada_coordinador_tiene_su_numero(self):
+        self.assertEqual((self.carlo.numero_coordinador, self.karen.numero_coordinador), (1, 2))
+
+    def test_los_tickets_llegan_al_1_luego_al_2_y_vuelven_al_1(self):
+        a, b, c = self._pide_servicio(), self._pide_servicio(), self._pide_servicio()
+        self.assertEqual((a.coordinador, b.coordinador, c.coordinador), (self.carlo, self.karen, self.carlo))
+
+    def test_el_folio_sigue_la_serie_despues_de_TD026(self):
+        self._solicitud(coordinador=self.karen, ticket_id='TD026')
+        t = self._pide_servicio()
+        self.assertEqual(t.ticket_id, 'TD027')
+
+    def test_el_que_finalizo_primero_recibe_el_siguiente(self):
+        from .views import al_finalizar
+        a, b = self._pide_servicio(), self._pide_servicio()        # a→carlo(1), b→karen(2)
+        b.estatus = 'terminado'; b.save()
+        al_finalizar(b)                                            # karen termina primero
+        c = self._pide_servicio()
+        self.assertEqual(c.coordinador, self.karen)                # le toca a karen aunque el turno sería el de carlo
+        d = self._pide_servicio()
+        self.assertEqual(d.coordinador, self.carlo)                # ya no está libre: sigue el turno normal
+
+    def test_con_varios_libres_gana_el_que_termino_antes(self):
+        from .views import al_finalizar
+        a, b = self._pide_servicio(), self._pide_servicio()
+        for t in (b, a):                                           # termina karen y luego carlo
+            t.estatus = 'terminado'; t.save(); al_finalizar(t)
+        self.assertEqual(self._pide_servicio().coordinador, self.karen)
+        self.assertEqual(self._pide_servicio().coordinador, self.carlo)
+
+    def test_sin_coordinadores_activos_queda_en_espera_sin_folio(self):
+        User.objects.filter(rol='coordinador').update(is_active=False)
+        t = self._pide_servicio()
+        self.assertIsNone(t.coordinador)
+        self.assertEqual(t.ticket_id, '')
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def marcar_todas_leidas(request):
-    Notificacion.objects.filter(destinatario=request.user, leida=False).update(leida=True)
-    return Response({'ok': True})
+class ListaTicketsConOperadorTests(APITestCase):
+    """Un ticket con Operador capturado (texto) no debe romper la lista de tickets en ningún rol."""
 
+    def setUp(self):
+        mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                     email_verificado=True)
+        self.cliente = mk('cli_op', 'cliente')
+        self.coord = mk('coord_op', 'coordinador')
+        self.admin = mk('adm_op', 'admin')
+        Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1', operador='Pedro López',
+                              cliente=self.cliente, coordinador=self.coord, estatus='pendiente')
 
-# ── Configuración de la empresa ─────────────────────────────────────────────
-# El nombre de la empresa y demás datos generales solo pueden ser editados
-# por el Administrador (no es delegable a Coordinador).
-
-@api_view(['GET', 'PUT', 'PATCH'])
-@permission_classes([IsAuthenticated])
-def empresa_config(request):
-    config = ConfiguracionEmpresa.obtener()
-    if request.method == 'GET':
-        return Response(ConfiguracionEmpresaSerializer(config).data)
-
-    if request.user.rol != 'admin':
-        return Response({'error': 'Solo el Administrador puede editar la información de la empresa.'}, status=403)
-
-    partial = request.method == 'PATCH'
-    serializer = ConfiguracionEmpresaSerializer(config, data=request.data, partial=partial)
-    if serializer.is_valid():
-        serializer.save(actualizado_por=request.user)
-        return Response(serializer.data)
-    return Response(serializer.errors, status=400)
+    def test_todos_los_roles_ven_sus_tickets(self):
+        for usuario in (self.admin, self.coord, self.cliente):
+            self.client.force_authenticate(usuario)
+            r = self.client.get('/api/tickets/')
+            self.assertEqual(r.status_code, 200, usuario.rol)
+            self.assertEqual(r.data['count'], 1, usuario.rol)
+            self.assertEqual(r.data['results'][0]['operador_nombre'], 'Pedro López')

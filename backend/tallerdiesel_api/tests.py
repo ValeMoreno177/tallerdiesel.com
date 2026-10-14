@@ -1130,3 +1130,24 @@ class AsignacionAutomaticaTests(BaseTickets):
         t = self._pide_servicio()
         self.assertIsNone(t.coordinador)
         self.assertEqual(t.ticket_id, '')
+
+
+class ListaTicketsConOperadorTests(APITestCase):
+    """Un ticket con Operador capturado (texto) no debe romper la lista de tickets en ningún rol."""
+
+    def setUp(self):
+        mk = lambda u, rol: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                     email_verificado=True)
+        self.cliente = mk('cli_op', 'cliente')
+        self.coord = mk('coord_op', 'coordinador')
+        self.admin = mk('adm_op', 'admin')
+        Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1', operador='Pedro López',
+                              cliente=self.cliente, coordinador=self.coord, estatus='pendiente')
+
+    def test_todos_los_roles_ven_sus_tickets(self):
+        for usuario in (self.admin, self.coord, self.cliente):
+            self.client.force_authenticate(usuario)
+            r = self.client.get('/api/tickets/')
+            self.assertEqual(r.status_code, 200, usuario.rol)
+            self.assertEqual(r.data['count'], 1, usuario.rol)
+            self.assertEqual(r.data['results'][0]['operador_nombre'], 'Pedro López')
