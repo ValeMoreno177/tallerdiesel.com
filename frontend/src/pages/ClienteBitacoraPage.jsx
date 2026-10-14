@@ -251,7 +251,7 @@ export default function ClienteBitacoraPage() {
 
   useEffect(() => { fetchTickets() }, [])
 
-  // Actualización automática cada 30 s (sin avisos de error: un corte breve de red no molesta).
+  // Actualización automática cada 5 s (sin avisos de error: un corte breve de red no molesta).
   // Las tarjetas conservan lo que el cliente esté escribiendo o editando.
   useAutoRefresh(() => api.get('/tickets/').then(({ data }) => setTickets(data.results || data)), { soloVisible: true })
 

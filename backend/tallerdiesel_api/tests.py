@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
+from django.utils import timezone
 
 from .models import Notificacion, Opinion, Tecnico, Ticket
 
@@ -822,13 +823,132 @@ class NotificacionesTiempoRealTests(BaseTickets):
         lista = self._con(self.carlo).get('/api/notificaciones/').data
         self.assertEqual(len(lista), 200)
 
-    def test_la_revision_de_sla_corre_a_lo_mucho_una_vez_por_minuto(self):
+    def test_la_revision_de_sla_corre_a_lo_mucho_una_vez_por_segundo(self):
         from unittest import mock
         with mock.patch('tallerdiesel_api.views.revisar_alertas_sla') as sla:
             c = self._con(self.carlo)
             for _ in range(5):
                 c.get('/api/notificaciones/')
             self.assertEqual(sla.call_count, 1)
+
+    def test_sla_avisa_al_coordinador_tras_cinco_segundos_pendiente(self):
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli2, coordinador=self.carlo, estatus='pendiente')
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_creacion=timezone.now() - timedelta(seconds=6),
+        )
+
+        revisar_alertas_sla()
+
+        aviso = Notificacion.objects.get(destinatario=self.carlo, tipo='alerta_sla', referencia_id=ticket.id)
+        self.assertIn('más de 5 segundos', aviso.mensaje)
+        ticket.refresh_from_db()
+        self.assertTrue(ticket.alerta_sla_enviada)
+
+    def test_sla_no_avisa_antes_de_cinco_segundos(self):
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli2, coordinador=self.carlo, estatus='pendiente')
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_creacion=timezone.now() - timedelta(seconds=4),
+        )
+
+        revisar_alertas_sla()
+
+        self.assertFalse(Notificacion.objects.filter(
+            destinatario=self.carlo, tipo='alerta_sla', referencia_id=ticket.id,
+        ).exists())
+
+    def test_sla_avisa_si_cliente_espera_mas_de_cinco_segundos_respuesta(self):
+        from unittest import mock
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        with mock.patch('tallerdiesel_api.views._enviar_html_en_segundo_plano'):
+            respuesta = self._con(self.cli).post(
+                f'/api/tickets/{ticket.id}/agregar_comentario/',
+                {'texto': '¿Hay novedades?'},
+                format='json',
+            )
+        self.assertEqual(respuesta.status_code, 201, respuesta.data)
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_ultimo_mensaje_cliente=timezone.now() - timedelta(seconds=6),
+        )
+
+        revisar_alertas_sla()
+
+        aviso = Notificacion.objects.get(
+            destinatario=self.carlo, tipo='alerta_respuesta_sla', referencia_id=ticket.id,
+        )
+        self.assertIn('más de 5 segundos', aviso.mensaje)
+        ticket.refresh_from_db()
+        self.assertTrue(ticket.alerta_respuesta_sla_enviada)
+
+    def test_respuesta_del_coordinador_cierra_el_tiempo_de_espera(self):
+        from unittest import mock
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        with mock.patch('tallerdiesel_api.views._enviar_html_en_segundo_plano'):
+            self.assertEqual(
+                self._con(self.cli).post(
+                    f'/api/tickets/{ticket.id}/agregar_comentario/',
+                    {'texto': '¿Hay novedades?'},
+                    format='json',
+                ).status_code,
+                201,
+            )
+            self.assertEqual(
+                self._con(self.carlo).post(
+                    f'/api/tickets/{ticket.id}/agregar_comentario/',
+                    {'texto': 'Ya estamos revisando el caso.'},
+                    format='json',
+                ).status_code,
+                201,
+            )
+        Ticket.objects.filter(pk=ticket.pk).update(
+            fecha_ultimo_mensaje_cliente=timezone.now() - timedelta(seconds=6),
+        )
+
+        revisar_alertas_sla()
+
+        self.assertFalse(Notificacion.objects.filter(
+            destinatario=self.carlo, tipo='alerta_respuesta_sla', referencia_id=ticket.id,
+        ).exists())
+        ticket.refresh_from_db()
+        self.assertGreaterEqual(
+            ticket.fecha_ultima_respuesta_coordinador,
+            ticket.fecha_ultimo_mensaje_cliente,
+        )
+
+    def test_nuevo_mensaje_del_cliente_reinicia_el_sla_de_respuesta(self):
+        from unittest import mock
+        from tallerdiesel_api.views import revisar_alertas_sla
+
+        ticket = self._solicitud(cliente=self.cli, coordinador=self.carlo, estatus='proceso')
+        endpoint = f'/api/tickets/{ticket.id}/agregar_comentario/'
+        cliente = self._con(self.cli)
+        with mock.patch('tallerdiesel_api.views._enviar_html_en_segundo_plano'):
+            self.assertEqual(
+                cliente.post(endpoint, {'texto': 'Primer mensaje'}, format='json').status_code,
+                201,
+            )
+            ticket.refresh_from_db()
+            primer_mensaje = ticket.fecha_ultimo_mensaje_cliente
+            Ticket.objects.filter(pk=ticket.pk).update(
+                fecha_ultimo_mensaje_cliente=timezone.now() - timedelta(seconds=6),
+            )
+            revisar_alertas_sla()
+            self.assertEqual(
+                cliente.post(endpoint, {'texto': 'Agrego un dato más'}, format='json').status_code,
+                201,
+            )
+
+        ticket.refresh_from_db()
+        self.assertFalse(ticket.alerta_respuesta_sla_enviada)
+        self.assertIsNone(ticket.fecha_ultima_respuesta_coordinador)
+        self.assertGreater(ticket.fecha_ultimo_mensaje_cliente, primer_mensaje)
 
     def test_la_nueva_solicitud_avisa_a_coordinadores_y_abre_el_ticket(self):
         self.client.force_authenticate(self.cli)

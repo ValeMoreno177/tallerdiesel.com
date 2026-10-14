@@ -207,6 +207,9 @@ class Ticket(models.Model):
     # El Coordinador solicita finalizar; el Cliente decide si se finaliza o no.
     finalizacion_solicitada = models.BooleanField(default=False)
     alerta_sla_enviada = models.BooleanField(default=False)  # evita duplicar alertas de SLA
+    fecha_ultimo_mensaje_cliente = models.DateTimeField(null=True, blank=True)
+    fecha_ultima_respuesta_coordinador = models.DateTimeField(null=True, blank=True)
+    alerta_respuesta_sla_enviada = models.BooleanField(default=False)
     tipo_solicitud = models.CharField(
         max_length=20,
         choices=[('coordinador','Coordinador'),('tecnico','Técnico')],

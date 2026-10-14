@@ -52,7 +52,7 @@ export default function DashboardCliente() {
 
   useEffect(() => { fetchDisponibilidad() }, [tecnicoElegido?.id])
 
-  // Actualización automática cada 30 s (servicios, estatus y disponibilidad del técnico)
+  // Actualización automática cada 5 s (servicios, estatus y disponibilidad del técnico)
   useAutoRefresh(fetchData, { soloVisible: true })
   useAutoRefresh(fetchDisponibilidad, { activo: !!tecnicoElegido?.id, soloVisible: true })
 

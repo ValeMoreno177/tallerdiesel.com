@@ -424,7 +424,7 @@ export default function BitacoraPage({ rol }) {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
-  // Actualización automática cada 30 s: solo los tickets, sin spinner y sin perder el scroll,
+  // Actualización automática cada 5 s: solo los tickets, sin spinner y sin perder el scroll,
   // los filtros ni las páginas que el usuario ya cargó con "Cargar más".
   const refrescarSilencioso = useCallback(async () => {
     const { data } = await api.get('/tickets/')

@@ -3,10 +3,9 @@ from tallerdiesel_api.views import revisar_alertas_sla
 
 
 class Command(BaseCommand):
-    help = ('Revisa tickets "Pendiente" que llevan demasiado tiempo sin atenderse y crea '
-            'notificaciones de alerta SLA para el coordinador asignado (o todos los admins). '
-            'Pensado para ejecutarse periódicamente vía cron, ej. cada 5 minutos:\n'
-            '  */5 * * * * cd /ruta/backend && python manage.py revisar_sla')
+    help = ('Revisa tickets sin atender y mensajes de cliente sin respuesta por más de 5 segundos; '
+            'crea alertas SLA para el coordinador asignado (o todos los admins). '
+            'El endpoint de notificaciones ejecuta esta revisión automáticamente.')
 
     def handle(self, *args, **options):
         revisar_alertas_sla()

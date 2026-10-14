@@ -28,7 +28,7 @@ export default function DashboardAdmin() {
   const fetchAll = () => cargar(false)
 
   useEffect(() => { fetchAll() }, [])
-  useAutoRefresh(() => cargar(true), { soloVisible: true })   // cada 30 s
+  useAutoRefresh(() => cargar(true), { soloVisible: true })   // cada 5 s
 
   const abrirTicket = async (ticketId) => {
     if (!ticketId) return

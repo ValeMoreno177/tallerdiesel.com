@@ -1,11 +1,10 @@
 // Tiempos del sistema (en milisegundos). Cámbialos aquí y se aplican en toda la app.
 
-// Cada cuánto se actualizan solos los datos en pantalla (dashboards, bitácoras,
-// detalle del ticket, notificaciones y calificaciones pendientes).
-export const REFRESCO_MS = 10 * 1000
+// Refresco máximo de datos visibles en dashboards, bitácoras y detalle del ticket.
+export const REFRESCO_MS = 5 * 1000
 
-// Las notificaciones (campana, sonido y avisos) se consultan más seguido para sentirse en tiempo real.
-export const NOTIFICACIONES_MS = 5 * 1000
+// Consulta frecuente para entregar mensajes y alertas con rapidez.
+export const NOTIFICACIONES_MS = 2 * 1000
 
 // Tiempo sin actividad (mouse, teclado, toque, scroll) tras el cual se cierra la sesión.
 export const INACTIVIDAD_MS = 5 * 60 * 1000

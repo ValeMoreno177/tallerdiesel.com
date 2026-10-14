@@ -29,7 +29,7 @@ export default function DashboardCoordinador() {
   const fetchData = () => cargar(false)
 
   useEffect(() => { fetchData() }, [])
-  useAutoRefresh(() => cargar(true), { soloVisible: true })   // cada 30 s
+  useAutoRefresh(() => cargar(true), { soloVisible: true })   // cada 5 s
 
   // Marcar como "rellena" — redirige al ticket creado
   const marcarRellenada = async (s) => {

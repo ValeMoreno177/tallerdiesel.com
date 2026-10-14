@@ -13,7 +13,7 @@ export const pedirCalificacion = (ticketId) =>
 
 /**
  * Solo para clientes. Cuando un servicio pasa a "Finalizado" (lo confirme el cliente o lo cierre
- * el coordinador/admin), a los ≤30 s aparece la ventana para calificar al técnico y al servicio.
+ * el coordinador/admin), a los ≤5 s aparece la ventana para calificar al técnico.
  *  - La ventana es obligatoria: no se puede aplazar ni cerrar sin enviar la calificación.
  *  - Una vez enviada la calificación no vuelve a pedirse.
  */

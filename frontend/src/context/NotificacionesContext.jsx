@@ -6,23 +6,50 @@ import { NOTIFICACIONES_MS } from '../config/tiempos'
 import Toast from '../components/Toast'
 
 // ── Sonido de notificación generado con Web Audio API (sin archivos externos) ──
-export function reproducirSonido() {
+let contextoAudio = null
+let sonidoPendiente = false
+
+function tocarSonido(ctx) {
+  const tiempos = [0, 0.15, 0.3]
+  const frecuencias = [880, 1100, 1320]
+  tiempos.forEach((t, i) => {
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(frecuencias[i], ctx.currentTime + t)
+    gain.gain.setValueAtTime(0.3, ctx.currentTime + t)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2)
+    osc.start(ctx.currentTime + t)
+    osc.stop(ctx.currentTime + t + 0.2)
+  })
+}
+
+export function activarSonido() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)()
-    const tiempos = [0, 0.15, 0.3]
-    const frecuencias = [880, 1100, 1320]
-    tiempos.forEach((t, i) => {
-      const osc  = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(frecuencias[i], ctx.currentTime + t)
-      gain.gain.setValueAtTime(0.3, ctx.currentTime + t)
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2)
-      osc.start(ctx.currentTime + t)
-      osc.stop(ctx.currentTime + t + 0.2)
-    })
+    const AudioContextAPI = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextAPI) throw new Error('Este navegador no admite Web Audio API.')
+    contextoAudio ||= new AudioContextAPI()
+    const reanudar = contextoAudio.state === 'suspended' ? contextoAudio.resume() : Promise.resolve()
+    reanudar.then(() => {
+      if (sonidoPendiente && contextoAudio.state === 'running') {
+        sonidoPendiente = false
+        tocarSonido(contextoAudio)
+      }
+    }).catch(e => console.warn('No se pudo activar el sonido:', e))
+  } catch (e) {
+    console.warn('Audio no disponible:', e)
+  }
+}
+
+export function reproducirSonido() {
+  if (!contextoAudio || contextoAudio.state !== 'running') {
+    sonidoPendiente = true
+    return
+  }
+  try {
+    tocarSonido(contextoAudio)
   } catch (e) {
     console.warn('Audio no disponible:', e)
   }
@@ -97,7 +124,7 @@ export function NotificacionesProvider({ children }) {
     if (hayNuevas) refrescarAhora()
   }, [user?.id])
 
-  // Cada 5 s (NOTIFICACIONES_MS), aunque la pestaña esté en segundo plano
+  // Cada 2 s (NOTIFICACIONES_MS), aunque la pestaña esté en segundo plano
   useAutoRefresh(cargar, { activo: !!user, inmediato: true, intervalo: NOTIFICACIONES_MS })
 
   const marcarLeida = useCallback(async (id) => {

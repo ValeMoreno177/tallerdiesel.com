@@ -15,7 +15,7 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
   const [permisoCargando, setPermisoCargando] = useState(false)
   const [asignandoTecnico, setAsignandoTecnico] = useState(false)
 
-  // Actualización automática cada 30 s: llegan comentarios nuevos, cambios de estatus,
+  // Actualización automática cada 5 s: llegan comentarios nuevos, cambios de estatus,
   // solicitudes de finalización y la calificación del cliente sin cerrar y reabrir el ticket.
   // (Se mezcla con lo que ya se ve; lo que el usuario está escribiendo no se toca.)
   const refrescarTicket = useCallback(async () => {

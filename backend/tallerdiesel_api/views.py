@@ -17,6 +17,7 @@ from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
 import io
+from threading import Thread
 
 from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
                      Notificacion, ComentarioTicket, TokenVerificacion, ConfiguracionEmpresa,
@@ -32,6 +33,10 @@ from .serializers import (
 )
 
 User = get_user_model()
+
+
+def _enviar_html_en_segundo_plano(**kwargs):
+    Thread(target=enviar_html, kwargs=kwargs, name='email-notificacion', daemon=True).start()
 
 
 def _con_resumen_calificaciones(queryset):
@@ -851,7 +856,7 @@ class TicketViewSet(viewsets.ModelViewSet):
             if ticket.cliente.email:
                 try:
                     url = f'{settings.FRONTEND_URL}/cliente/dashboard'
-                    enviar_html(
+                    _enviar_html_en_segundo_plano(
                         asunto=f'🧑‍💼 Un coordinador tomó tu servicio — {ticket.etiqueta}',
                         destinatarios=[ticket.cliente.email],
                         html_body=email_nuevo_comentario(ticket.coordinador.nombre_completo, 'coordinador', ticket.etiqueta,
@@ -940,9 +945,12 @@ class TicketViewSet(viewsets.ModelViewSet):
                     url = f'{settings.FRONTEND_URL}/cliente/dashboard'
                     asunto = f'{"🔧 Cambiamos tu técnico" if es_cambio else "🔧 Ya tienes técnico asignado"} — {ticket.etiqueta}'
                     texto_plano = f'{tecnico.nombre} {"ahora" if es_cambio else ""} atenderá tu servicio (ticket {ticket.etiqueta}).\n\nIngresa al sistema: {url}'
-                    enviar_html(asunto, [ticket.cliente.email],
-                                email_tecnico_asignado(tecnico.nombre, ticket.etiqueta, es_cambio, url),
-                                texto_plano)
+                    _enviar_html_en_segundo_plano(
+                        asunto=asunto,
+                        destinatarios=[ticket.cliente.email],
+                        html_body=email_tecnico_asignado(tecnico.nombre, ticket.etiqueta, es_cambio, url),
+                        text_body=texto_plano,
+                    )
                 except Exception as e:
                     print(f'⚠️  Error enviando correo de técnico asignado: {e}')
 
@@ -1038,7 +1046,7 @@ class TicketViewSet(viewsets.ModelViewSet):
             if ticket.cliente.email:
                 try:
                     url = f'{settings.FRONTEND_URL}/cliente/dashboard'
-                    enviar_html(
+                    _enviar_html_en_segundo_plano(
                         asunto=f'🧑‍💼 Un coordinador tomó tu servicio — {ticket.etiqueta}',
                         destinatarios=[ticket.cliente.email],
                         html_body=email_nuevo_comentario(nuevo_coordinador.nombre_completo, 'coordinador', ticket.etiqueta,
@@ -1062,6 +1070,17 @@ class TicketViewSet(viewsets.ModelViewSet):
             autor_nombre=request.user.nombre_completo,
             texto=texto,
         )
+        if request.user.rol == 'cliente':
+            Ticket.objects.filter(pk=ticket.pk).update(
+                fecha_ultimo_mensaje_cliente=comentario.fecha,
+                fecha_ultima_respuesta_coordinador=None,
+                alerta_respuesta_sla_enviada=False,
+            )
+        elif request.user.rol in ('coordinador', 'admin'):
+            Ticket.objects.filter(pk=ticket.pk).update(
+                fecha_ultima_respuesta_coordinador=comentario.fecha,
+                alerta_respuesta_sla_enviada=True,
+            )
         self._notificar_comentario(ticket, request.user, texto)
         return Response(ComentarioTicketSerializer(comentario).data, status=201)
 
@@ -1107,7 +1126,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                     )
                 if emails:
                     url = f'{settings.FRONTEND_URL}/coordinador/dashboard'
-                    enviar_html(
+                    _enviar_html_en_segundo_plano(
                         asunto=f'💬 Nuevo mensaje del cliente — {ticket.etiqueta}',
                         destinatarios=emails,
                         html_body=email_nuevo_comentario(autor.nombre_completo, 'cliente', ticket.etiqueta, texto, url),
@@ -1124,7 +1143,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                     )
                 if ticket.cliente_id and ticket.cliente.email:
                     url = f'{settings.FRONTEND_URL}/cliente/dashboard'
-                    enviar_html(
+                    _enviar_html_en_segundo_plano(
                         asunto=f'💬 Respuesta a tu solicitud — {ticket.etiqueta}',
                         destinatarios=[ticket.cliente.email],
                         html_body=email_nuevo_comentario(autor.nombre_completo, 'coordinador', ticket.etiqueta, texto, url),
@@ -1819,13 +1838,12 @@ def marcar_solicitud_atendida(request, pk):
 
 # ── Notificaciones ────────────────────────────────────────────────────────────
 
-SLA_MINUTOS_PENDIENTE = 20  # minutos que puede estar un ticket "Pendiente" antes de alertar
+SLA_SEGUNDOS_PENDIENTE = 5
 
 
 def revisar_alertas_sla():
-    """Crea una notificación (una sola vez por ticket) cuando un servicio
-    lleva demasiado tiempo sin ser atendido ('Pendiente')."""
-    limite = timezone.now() - timedelta(minutes=SLA_MINUTOS_PENDIENTE)
+    """Notifica tickets pendientes y mensajes de cliente que esperan respuesta más de 5 s."""
+    limite = timezone.now() - timedelta(seconds=SLA_SEGUNDOS_PENDIENTE)
     atrasados = Ticket.objects.filter(
         estatus='pendiente', alerta_sla_enviada=False, fecha_creacion__lt=limite
     )
@@ -1838,22 +1856,48 @@ def revisar_alertas_sla():
             Notificacion.objects.create(
                 destinatario=u,
                 titulo=f'⏰ SLA: Ticket {t.etiqueta} sin atender',
-                mensaje=f'El servicio {t.etiqueta} de {t.empresa} lleva más de {SLA_MINUTOS_PENDIENTE} minutos "Pendiente" sin asignar técnico.',
+                mensaje=f'El servicio {t.etiqueta} de {t.empresa} lleva más de {SLA_SEGUNDOS_PENDIENTE} segundos "Pendiente" sin asignar técnico.',
                 tipo='alerta_sla',
                 referencia_id=t.id,
             )
         t.alerta_sla_enviada = True
         t.save(update_fields=['alerta_sla_enviada'])
 
+    respuestas_pendientes = Ticket.objects.filter(
+        fecha_ultimo_mensaje_cliente__lt=limite,
+        alerta_respuesta_sla_enviada=False,
+    ).filter(
+        Q(fecha_ultima_respuesta_coordinador__isnull=True)
+        | Q(fecha_ultima_respuesta_coordinador__lt=F('fecha_ultimo_mensaje_cliente'))
+    ).select_related('coordinador')
+    for ticket in respuestas_pendientes:
+        if ticket.coordinador_id:
+            destinatarios = [ticket.coordinador]
+        else:
+            destinatarios = list(User.objects.filter(rol='admin', is_active=True))
+        for usuario in destinatarios:
+            Notificacion.objects.create(
+                destinatario=usuario,
+                titulo=f'⏰ SLA: respuesta pendiente — Ticket {ticket.etiqueta}',
+                mensaje=(
+                    f'El cliente lleva más de {SLA_SEGUNDOS_PENDIENTE} segundos esperando '
+                    f'respuesta en el ticket {ticket.etiqueta}.'
+                ),
+                tipo='alerta_respuesta_sla',
+                referencia_id=ticket.id,
+            )
+        ticket.alerta_respuesta_sla_enviada = True
+        ticket.save(update_fields=['alerta_respuesta_sla_enviada'])
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def mis_notificaciones(request):
-    """Se consulta cada 5 segundos desde el navegador, así que es ligera: la revisión de SLA (que recorre
-    tickets) corre como máximo una vez por minuto y se devuelven las 200 más recientes. Las notificaciones
+    """Se consulta cada 2 segundos desde el navegador. La revisión de SLA corre como máximo una vez por
+    segundo y se devuelven las 200 notificaciones más recientes. Las notificaciones
     viven en la base de datos: siguen ahí aunque la persona cierre sesión."""
     from django.core.cache import cache
-    if request.user.rol in ('admin', 'coordinador') and cache.add('sla_revisado', True, timeout=60):
+    if request.user.rol in ('admin', 'coordinador') and cache.add('sla_revisado', True, timeout=1):
         revisar_alertas_sla()
     notifs = Notificacion.objects.filter(destinatario=request.user).order_by('-fecha', '-id')[:200]
     return Response(NotificacionSerializer(notifs, many=True).data)

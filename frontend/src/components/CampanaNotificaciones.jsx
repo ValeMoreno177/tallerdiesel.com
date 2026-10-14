@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useNotificaciones } from '../context/NotificacionesContext'
+import { activarSonido, useNotificaciones } from '../context/NotificacionesContext'
 import { pedirCalificacion } from './CalificacionGlobal'
 import api from '../api/client'
 
-// Las notificaciones se consultan cada 30 s desde NotificacionesProvider (una sola vez para toda
+// Las notificaciones se consultan cada 2 s desde NotificacionesProvider (una sola vez para toda
 // la app, con sonido y aviso flotante). Esta campana solo las muestra.
 export default function CampanaNotificaciones({ onAbrirTicket }) {
   const { notifs, noLeidas, marcarLeida, marcarTodas, sonidoActivo, setSonidoActivo } = useNotificaciones()
@@ -70,9 +70,15 @@ export default function CampanaNotificaciones({ onAbrirTicket }) {
   }
 
   const handleCampanaClick = () => {
-    // Primer click activa el contexto de audio (requerido por navegadores)
-    try { new (window.AudioContext || window.webkitAudioContext)() } catch {}
+    activarSonido()
     setAbierto(!abierto)
+  }
+
+  const alternarSonido = () => {
+    setSonidoActivo(activo => {
+      if (!activo) activarSonido()
+      return !activo
+    })
   }
 
   return (
@@ -104,7 +110,7 @@ export default function CampanaNotificaciones({ onAbrirTicket }) {
 
         {/* Toggle sonido */}
         <button
-          onClick={() => setSonidoActivo(s => !s)}
+          onClick={alternarSonido}
           title={sonidoActivo ? 'Silenciar notificaciones' : 'Activar sonido'}
           style={{
             background: 'rgba(255,255,255,0.06)', border: 'none',

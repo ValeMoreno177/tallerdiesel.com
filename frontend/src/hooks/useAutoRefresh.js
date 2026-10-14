@@ -7,7 +7,7 @@ export const EVENTO_REFRESCAR = 'td:refrescar'
 export const refrescarAhora = () => window.dispatchEvent(new Event(EVENTO_REFRESCAR))
 
 /**
- * Ejecuta `callback` cada 30 s (REFRESCO_MS) mientras el componente esté montado.
+ * Ejecuta `callback` cada REFRESCO_MS mientras el componente esté montado.
  *
  *  - activo:       false pausa la actualización.
  *  - inmediato:    además la ejecuta una vez al montar (útil si el componente no carga por su cuenta).
