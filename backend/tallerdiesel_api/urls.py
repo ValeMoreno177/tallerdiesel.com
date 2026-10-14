@@ -32,6 +32,5 @@ urlpatterns = [
     path('notificaciones/<int:pk>/restaurar/', views.restaurar_notificacion),
     path('notificaciones/leer-todas/',      views.marcar_todas_leidas),
     path('empresas/',                       views.lista_empresas),
-    path('operadores/crear/',              views.crear_operador),
     path('empresa-config/',                 views.empresa_config),
 ]
