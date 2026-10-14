@@ -110,6 +110,20 @@ STORAGES = {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
+AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '').strip()
+if AWS_STORAGE_BUCKET_NAME:
+    # Evidencias privadas en S3 o un servicio compatible (por ejemplo, Cloudflare R2).
+    # Sin bucket configurado, el entorno local conserva el almacenamiento en backend/media.
+    INSTALLED_APPS.append('storages')
+    STORAGES['default'] = {'BACKEND': 'storages.backends.s3.S3Storage'}
+    AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME') or None
+    AWS_S3_ENDPOINT_URL = os.environ.get('AWS_S3_ENDPOINT_URL') or None
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID') or None
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY') or None
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_DEFAULT_ACL = None
+    AWS_QUERYSTRING_AUTH = True
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 

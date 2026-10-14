@@ -18,6 +18,7 @@ from decimal import Decimal
 from datetime import date, timedelta
 from openpyxl import Workbook, load_workbook
 import io
+from PIL import Image, UnidentifiedImageError
 from threading import Thread
 
 from .models import (Ticket, Tecnico, Opinion, Proveedor, SolicitudServicio,
@@ -275,6 +276,10 @@ class PuedeEditarTicket(BasePermission):
         if request.method in SAFE_METHODS:
             return obj.cliente_id == request.user.id or request.user.rol in ('admin', 'coordinador')
         rol = request.user.rol
+        # Adjuntar evidencia al chat no modifica los datos del ticket: cualquier miembro
+        # del equipo que puede consultar el servicio puede aportar archivos.
+        if rol in ('admin', 'coordinador') and view.action == 'subir_evidencia':
+            return True
         if rol == 'admin':
             if view.action in self.ACCIONES_EDICION:
                 return puede_gestionar_ticket(request.user, obj) or view.action in self.ACCIONES_ADMIN
@@ -290,7 +295,7 @@ class PuedeEditarTicket(BasePermission):
         if obj.cliente_id != request.user.id:
             return False
         # Cliente: solo su propio ticket
-        if view.action in ('agregar_comentario', 'editar_comentario'):
+        if view.action in ('agregar_comentario', 'editar_comentario', 'subir_evidencia'):
             return True  # los comentarios nunca se bloquean, ni con el servicio finalizado
         if view.action == 'marcar_mensajes_leidos':
             return True
@@ -1209,8 +1214,9 @@ class TicketViewSet(viewsets.ModelViewSet):
         Funciona aunque el ticket esté finalizado (el cliente puede pedirla después)."""
         import os
         ticket = self.get_object()
-        if request.user.rol not in ('coordinador', 'admin'):
-            return Response({'error': 'Solo el coordinador o el administrador pueden subir evidencias.'}, status=403)
+        es_cliente_del_ticket = ticket.cliente_id == request.user.id
+        if request.user.rol not in ('coordinador', 'admin') and not es_cliente_del_ticket:
+            return Response({'error': 'Solo las personas relacionadas con el servicio pueden adjuntar archivos.'}, status=403)
         archivo = request.FILES.get('archivo')
         if not archivo:
             return Response({'error': 'Selecciona un archivo.'}, status=400)
@@ -1219,6 +1225,20 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Formato no permitido. Usa JPG, PNG, WEBP o PDF.'}, status=400)
         if archivo.size > self.MAX_EVIDENCIA_MB * 1024 * 1024:
             return Response({'error': f'El archivo pesa más de {self.MAX_EVIDENCIA_MB} MB.'}, status=400)
+        formatos_imagen = {'.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG', '.webp': 'WEBP'}
+        try:
+            if ext == '.pdf':
+                if archivo.read(5) != b'%PDF-':
+                    return Response({'error': 'El archivo no parece ser un PDF válido.'}, status=400)
+            elif ext in formatos_imagen:
+                imagen = Image.open(archivo)
+                imagen.verify()
+                if imagen.format != formatos_imagen[ext]:
+                    return Response({'error': 'El contenido de la imagen no coincide con su formato.'}, status=400)
+        except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+            return Response({'error': 'El archivo de imagen está dañado o no es válido.'}, status=400)
+        finally:
+            archivo.seek(0)
         try:
             ev = EvidenciaTicket.objects.create(
                 ticket=ticket, archivo=archivo, nombre_original=archivo.name[:255],
@@ -1229,7 +1249,18 @@ class TicketViewSet(viewsets.ModelViewSet):
                 texto=f'📎 Evidencia del servicio subida: {ev.nombre_original}',
                 evidencia=ev,
             )
-            if ticket.cliente_id:
+            if es_cliente_del_ticket:
+                destinatarios = [ticket.coordinador] if ticket.coordinador_id else list(
+                    User.objects.filter(rol='admin', is_active=True)
+                )
+                for destinatario in destinatarios:
+                    Notificacion.objects.create(
+                        destinatario=destinatario,
+                        titulo=f'Nueva evidencia del cliente en {ticket.etiqueta}',
+                        mensaje=f'{request.user.nombre_completo} adjuntó: {ev.nombre_original}',
+                        tipo='comentario', referencia_id=ticket.id,
+                    )
+            elif ticket.cliente_id:
                 Notificacion.objects.create(
                     destinatario=ticket.cliente,
                     titulo=f'Nueva evidencia en tu servicio {ticket.etiqueta}',

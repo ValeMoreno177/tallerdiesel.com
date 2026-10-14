@@ -45,6 +45,7 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
   const [evidenciasTicket, setEvidenciasTicket] = useState(ticket.evidencias || [])
   const finMensajes = useRef(null)
   const archivoRef = useRef(null)
+  const fotoRef = useRef(null)
   const idsComentarios = useRef(null)
   const onReadRef = useRef(onRead)
 
@@ -177,7 +178,9 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
     const nombre = String(comentario.texto).match(/^📎 Evidencia del servicio subida: (.+)$/)?.[1]
     return nombre ? [...evidenciasTicket].reverse().find(e => e.nombre_original === nombre) || null : null
   }
-  const puedeSubirEvidencia = user?.rol === 'coordinador' || user?.rol === 'admin'
+  const puedeSubirEvidencia = user?.rol === 'cliente'
+    ? ticketInfo.cliente === user.id
+    : ['coordinador', 'admin'].includes(user?.rol)
   const fechaMensaje = fecha => new Date(fecha).toLocaleString('es-MX', {
     day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
   })
@@ -298,6 +301,14 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
                 style={{ display: 'none' }}
                 onChange={subirEvidencias}
               />
+              <input
+                ref={fotoRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+                style={{ display: 'none' }}
+                onChange={subirEvidencias}
+              />
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -305,6 +316,14 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
                 disabled={subiendo}
                 onClick={() => archivoRef.current?.click()}
               >{subiendo ? '...' : '📎'}</button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                title="Tomar foto"
+                aria-label="Tomar foto"
+                disabled={subiendo}
+                onClick={() => fotoRef.current?.click()}
+              >{subiendo ? '...' : '📷'}</button>
             </>
           )}
           <textarea

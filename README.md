@@ -41,6 +41,20 @@ npm run dev
 | API REST | http://localhost:8000/api/ |
 | Admin Django | http://localhost:8000/admin |
 
+### Evidencias persistentes en producción
+
+Las evidencias se guardan en almacenamiento local durante el desarrollo. Para conservarlas entre despliegues en Railway, configura un bucket privado S3 o compatible y define estas variables en el servicio backend:
+
+```env
+AWS_STORAGE_BUCKET_NAME=nombre-del-bucket
+AWS_S3_REGION_NAME=auto
+AWS_S3_ENDPOINT_URL=https://<cuenta>.r2.cloudflarestorage.com
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+Para AWS S3, usa la región del bucket y deja `AWS_S3_ENDPOINT_URL` vacío. El bucket debe permanecer privado; Django sirve las evidencias solo después de validar la sesión y el acceso al ticket. Con estas variables configuradas y mientras `backend/media` siga accesible, ejecuta `python manage.py migrar_evidencias_s3` para copiar los archivos existentes.
+
 ---
 
 ## Usuarios de prueba
