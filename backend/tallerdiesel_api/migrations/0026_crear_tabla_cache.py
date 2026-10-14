@@ -11,7 +11,7 @@ def crear_tabla_cache(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tallerdiesel_api', '0026_chat_leido_y_respuesta_resenas'),
+        ('tallerdiesel_api', '0025_merge_20261014_1120'),
     ]
 
     operations = [
