@@ -775,9 +775,6 @@ export default function BitacoraPage({ rol }) {
           onUpdated={fetchAll}
         />
       )}
-<<<<<<< HEAD
-
-      {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
         <div className="truck-mover">
           <div className="truck-scaler">
@@ -791,7 +788,6 @@ export default function BitacoraPage({ rol }) {
           </div>
         </div>
       </div>
-=======
       {ticketChat && (
         <ChatTicketModal
           ticket={ticketChat}
@@ -799,7 +795,6 @@ export default function BitacoraPage({ rol }) {
           onRead={fetchAll}
         />
       )}
->>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }

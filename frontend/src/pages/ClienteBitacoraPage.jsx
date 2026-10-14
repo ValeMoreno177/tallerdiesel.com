@@ -257,9 +257,6 @@ export default function ClienteBitacoraPage() {
           </div>
         )}
       </main>
-<<<<<<< HEAD
-
-      {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
         <div className="truck-mover">
           <div className="truck-scaler">
@@ -273,7 +270,6 @@ export default function ClienteBitacoraPage() {
           </div>
         </div>
       </div>
-=======
       {ticketChat && (
         <ChatTicketModal
           ticket={ticketChat}
@@ -281,7 +277,6 @@ export default function ClienteBitacoraPage() {
           onRead={fetchTickets}
         />
       )}
->>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }

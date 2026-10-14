@@ -253,9 +253,6 @@ export default function DashboardCliente() {
           onUpdated={fetchData}
         />
       )}
-<<<<<<< HEAD
-
-      {/* ── Camión pequeño de reparto ── */}
       <div className="truck-lane" aria-hidden="true">
         <div className="truck-mover">
           <div className="truck-scaler">
@@ -269,7 +266,6 @@ export default function DashboardCliente() {
           </div>
         </div>
       </div>
-=======
       {ticketChat && (
         <ChatTicketModal
           ticket={ticketChat}
@@ -277,7 +273,6 @@ export default function DashboardCliente() {
           onRead={fetchData}
         />
       )}
->>>>>>> e90fa91 (Botón de chat y aviso de mensajes nuevos)
     </div>
   )
 }
