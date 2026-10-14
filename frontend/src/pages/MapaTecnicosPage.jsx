@@ -139,7 +139,49 @@ export default function MapaTecnicosPage() {
   };
 
   return (
-    <div className="dashboard-layout">
+    <div className="dashboard-layout" style={{ position: "relative", overflowX: "hidden" }}>
+      <style>{`
+        /* ═════════ Camión pequeño que cruza toda la pantalla ═════════ */
+        /* z-index alto para que quede por encima del mapa de Leaflet (sus capas llegan a 1000) */
+        .truck-lane {
+          position: fixed; bottom: 0; left: 0; width: 100vw; height: 50px;
+          overflow: hidden; pointer-events: none; z-index: 1200;
+        }
+        .truck-mover {
+          position: absolute; bottom: 4px; left: 0; width: 160px; height: 85px;
+          animation: driveAcross 14s linear infinite;
+        }
+        @keyframes driveAcross {
+          from { transform: translateX(-180px); }
+          to   { transform: translateX(100vw); }
+        }
+        .truck-scaler {
+          position: absolute; bottom: 0; left: 0; width: 160px; height: 85px;
+          transform: scale(0.42); transform-origin: bottom left;
+        }
+        .truck-animado {
+          position: absolute; bottom: 0; left: 0; width: 160px; height: 85px;
+          animation: bounceTruck 0.6s ease-in-out infinite alternate;
+        }
+        @keyframes bounceTruck {
+          0%   { transform: translateY(0); }
+          100% { transform: translateY(-3px); }
+        }
+        .truck-box { position: absolute; left: 0; top: 10px; width: 95px; height: 50px; background: #f05443; border: 2.5px solid #222; border-radius: 4px; }
+        .truck-box-stripe { position: absolute; top: 16px; left: 0; width: 95px; height: 14px; background: #6b6b6b; border-top: 2px solid #222; border-bottom: 2px solid #222; }
+        .truck-cab { position: absolute; left: 93px; top: 22px; width: 45px; height: 38px; background: #f3d4a0; border: 2.5px solid #222; border-top-left-radius: 14px; border-top-right-radius: 8px; border-bottom-right-radius: 4px; }
+        .truck-window { position: absolute; top: 6px; left: 6px; width: 22px; height: 16px; background: #fff; border: 2px solid #222; border-top-left-radius: 10px; }
+        .truck-base { position: absolute; bottom: 12px; left: 15px; width: 115px; height: 10px; background: #f05443; border: 2px solid #222; border-radius: 2px; }
+        .wheel-custom { width: 24px; height: 24px; background: #222; border: 3px solid #fff; border-radius: 50%; position: absolute; bottom: 0; box-shadow: 0 0 0 2px #222; animation: spin 0.8s linear infinite; }
+        .wheel-custom.left { left: 30px; }
+        .wheel-custom.right { left: 102px; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+          .truck-mover, .truck-animado, .wheel-custom { animation: none; }
+          .truck-mover { transform: translateX(40px); }
+        }
+      `}</style>
+
       <Sidebar />
      <main
         className="main-content-fluid"
@@ -432,12 +474,6 @@ export default function MapaTecnicosPage() {
                         {t.categoria_display}
                       </span>
                       <br />
-                      <span style={{ fontSize: "0.85rem" }}>
-                        {t.total_calificaciones > 0 && t.calificacion_promedio != null
-                          ? `⭐ ${Number(t.calificacion_promedio).toFixed(1)} · ${t.total_calificaciones} evaluación${t.total_calificaciones === 1 ? "" : "es"}`
-                          : "Sin calificaciones"}
-                      </span>
-                      <br />
                       <div style={{ marginTop: 6, fontSize: "0.85rem" }}>
                         📍 {t.ciudad}, {t.estado}
                         <br />
@@ -562,6 +598,21 @@ export default function MapaTecnicosPage() {
           )}
         </div>
       </main>
+
+      {/* ── Camión pequeño de reparto ── */}
+      <div className="truck-lane" aria-hidden="true">
+        <div className="truck-mover">
+          <div className="truck-scaler">
+            <div className="truck-animado">
+              <div className="truck-box"><div className="truck-box-stripe"></div></div>
+              <div className="truck-cab"><div className="truck-window"></div></div>
+              <div className="truck-base"></div>
+              <div className="wheel-custom left"></div>
+              <div className="wheel-custom right"></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -9,12 +9,73 @@ import { prepararFotoPerfil } from '../utils/imagen'
 
 const ROL = { admin: 'Administrador', coordinador: 'Coordinador', cliente: 'Cliente' }
 
+// Recorta y comprime la foto de portada (proporción 4:1) y la devuelve como dataURL
+const TIPOS_PORTADA = ['image/jpeg', 'image/png', 'image/webp']
+function prepararPortada(archivo) {
+  return new Promise((resolve, reject) => {
+    if (!TIPOS_PORTADA.includes(archivo.type)) return reject(new Error('Usa una imagen JPG, PNG o WEBP.'))
+    if (archivo.size > 8 * 1024 * 1024) return reject(new Error('La imagen es muy pesada (máximo 8 MB).'))
+    const url = URL.createObjectURL(archivo)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const W = 1600, H = 400
+      const canvas = document.createElement('canvas')
+      canvas.width = W; canvas.height = H
+      const ctx = canvas.getContext('2d')
+      // "cover": llena todo el banner sin deformar la imagen
+      const escala = Math.max(W / img.width, H / img.height)
+      const w = img.width * escala, h = img.height * escala
+      ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h)
+      resolve(canvas.toDataURL('image/jpeg', 0.8))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la imagen.')) }
+    img.src = url
+  })
+}
+
 export default function PerfilPage() {
   const { user, actualizarUsuario } = useAuth()
   const inputRef = useRef(null)
+  const portadaRef = useRef(null)
+
+  // ── Portada (foto de fondo del banner; se guarda en este navegador) ──
+  const clavePortada = `perfil_portada_${user?.id ?? user?.username ?? 'usuario'}`
+  const [portada, setPortada] = useState(null)
+  const [procesandoPortada, setProcesandoPortada] = useState(false)
+  const [errorPortada, setErrorPortada] = useState('')
+
+  useEffect(() => {
+    try { setPortada(localStorage.getItem(clavePortada) || null) } catch { setPortada(null) }
+  }, [clavePortada])
+
+  const elegirPortada = async (e) => {
+    const archivo = e.target.files?.[0]
+    e.target.value = ''
+    if (!archivo) return
+    setErrorPortada(''); setProcesandoPortada(true)
+    try {
+      const dataUrl = await prepararPortada(archivo)
+      try {
+        localStorage.setItem(clavePortada, dataUrl)
+      } catch {
+        throw new Error('No hay espacio para guardar la imagen en este navegador. Prueba con otra más ligera.')
+      }
+      setPortada(dataUrl)
+      avisar('exito', 'Portada actualizada')
+    } catch (err) {
+      setErrorPortada(err.message)
+    } finally { setProcesandoPortada(false) }
+  }
+
+  const quitarPortada = () => {
+    try { localStorage.removeItem(clavePortada) } catch { /* sin acceso a storage */ }
+    setPortada(null); setErrorPortada('')
+    avisar('exito', 'Portada eliminada')
+  }
 
   // ── Foto ──
-  const [previa, setPrevia] = useState(null)        // { blob, url } lista para guardar
+  const [previa, setPrevia] = useState(null)
   const [procesando, setProcesando] = useState(false)
   const [guardandoFoto, setGuardandoFoto] = useState(false)
   const [errorFoto, setErrorFoto] = useState('')
@@ -32,7 +93,7 @@ export default function PerfilPage() {
 
   const elegirArchivo = async (e) => {
     const archivo = e.target.files?.[0]
-    e.target.value = ''                                // permite volver a elegir el mismo archivo
+    e.target.value = ''
     if (!archivo) return
     setErrorFoto(''); setProcesando(true)
     try {
@@ -58,18 +119,6 @@ export default function PerfilPage() {
     } finally { setGuardandoFoto(false) }
   }
 
-  const quitarFoto = async () => {
-    if (!window.confirm('¿Quitar tu foto de perfil?')) return
-    setGuardandoFoto(true); setErrorFoto('')
-    try {
-      const { data } = await api.delete('/auth/foto/')
-      actualizarUsuario(data)
-      avisar('exito', 'Foto eliminada')
-    } catch {
-      setErrorFoto('No se pudo quitar la foto. Intenta de nuevo.')
-    } finally { setGuardandoFoto(false) }
-  }
-
   const cambiarPassword = async (e) => {
     e.preventDefault()
     setErrorPw('')
@@ -78,7 +127,6 @@ export default function PerfilPage() {
     setGuardandoPw(true)
     try {
       const { data } = await api.post('/auth/cambiar-password/', pw)
-      // Las demás sesiones se cierran; esta sigue activa con tokens nuevos
       localStorage.setItem('access_token', data.access)
       localStorage.setItem('refresh_token', data.refresh)
       setPw(vacio)
@@ -91,73 +139,352 @@ export default function PerfilPage() {
   }
 
   const campo = (k) => ({ value: pw[k], onChange: e => setPw({ ...pw, [k]: e.target.value }), required: true })
+
+  // Dato de la franja inferior de la tarjeta de perfil
   const dato = (etiqueta, valor) => valor ? (
-    <div>
-      <div style={{ fontSize: '0.72rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5 }}>{etiqueta}</div>
-      <div style={{ fontSize: '0.9rem', color: '#111827', wordBreak: 'break-word' }}>{valor}</div>
+    <div className="perfil-dato">
+      <span className="perfil-dato-et">{etiqueta}</span>
+      <span className="perfil-dato-val">{valor}</span>
     </div>
   ) : null
 
   return (
-    <div className="dashboard-layout">
+    <div className="dashboard-layout" style={{ position: 'relative', minHeight: '100vh', overflowX: 'hidden', paddingBottom: '70px' }}>
+      <style>{`
+        /* ═════════ Diseño del perfil (solo estructura; se conservan los colores del sistema) ═════════ */
+
+        /* Banner superior */
+        .perfil-banner-wrap { position: relative; }
+        .perfil-banner {
+          height: clamp(200px, 26vw, 290px);
+          border-radius: 16px;
+          background:
+            radial-gradient(circle at 15% 120%, rgba(19, 1, 1, 0.22) 0 90px, transparent 91px),
+            radial-gradient(circle at 85% -20%, rgba(194, 100, 24, 0.18) 0 110px, transparent 111px),
+            linear-gradient(120deg, var(--naranja), #d8391d);
+        }
+        .perfil-banner.con-foto {
+          background-size: cover;
+          background-position: center;
+          background-repeat: no-repeat;
+        }
+        /* Botones para cambiar la portada (arriba a la derecha del banner) */
+        .perfil-portada-btns {
+          position: absolute;
+          top: 12px;
+          right: 12px;
+          display: flex;
+          gap: 8px;
+          z-index: 3;
+        }
+        .perfil-portada-btn {
+          border: none;
+          cursor: pointer;
+          font: inherit;
+          font-size: 0.78rem;
+          font-weight: 600;
+          color: #01070f;
+          background: rgba(255,255,255,.92);
+          padding: 6px 12px;
+          border-radius: 999px;
+          box-shadow: 0 1px 4px rgba(0,0,0,.25);
+        }
+        .perfil-portada-btn:hover:not(:disabled) { background: #0c0b0b; }
+        .perfil-portada-btn:disabled { opacity: .6; cursor: default; }
+
+        /* Tarjeta central que se encima sobre el banner (sin overflow para no recortar el avatar) */
+        .perfil-tarjeta {
+          position: relative;
+          z-index: 2;
+          max-width: 680px;
+          margin: -64px auto 0;
+          background: #fff;
+          border-radius: 16px;
+          box-shadow: 0 2px 10px rgba(0,0,0,.10);
+        }
+        .perfil-tarjeta-top {
+          position: relative;
+          padding: 72px 24px 22px;
+          text-align: center;
+        }
+        .perfil-rol { display: inline-block; margin-top: 8px; }
+        .perfil-foto-nota { font-size: 0.75rem; color: #010916; margin-top: 10px; }
+        .perfil-foto-acciones {
+          display: flex;
+          gap: 8px;
+          justify-content: center;
+          flex-wrap: wrap;
+          margin-top: 14px;
+        }
+        .perfil-avatar {
+          position: absolute;
+          top: -52px;
+          left: 50%;
+          transform: translateX(-50%);
+          border-radius: 50%;
+          border: 5px solid #fff;
+          background: #fff;
+          box-shadow: 0 2px 10px rgba(0,0,0,.18);
+          line-height: 0;
+        }
+        .perfil-avatar img { border-radius: 50%; display: block; }
+        /* Avatar clicable para cambiar la foto */
+        .perfil-avatar-btn {
+          position: relative;
+          display: block;
+          border: none;
+          padding: 0;
+          background: none;
+          border-radius: 50%;
+          cursor: pointer;
+          line-height: 0;
+          transition: transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s;
+        }
+        .perfil-avatar-btn:hover:not(:disabled),
+        .perfil-avatar-btn:focus-visible {
+          transform: scale(1.18);
+          box-shadow: 0 6px 18px rgba(0,0,0,.28);
+        }
+        .perfil-avatar-btn:active:not(:disabled) { transform: scale(1.1); }
+        .perfil-avatar-btn:disabled { cursor: default; opacity: .7; }
+        .perfil-avatar-edit {
+          position: absolute;
+          right: 0;
+          bottom: 2px;
+          width: 30px;
+          height: 30px;
+          border-radius: 50%;
+          background: #fff;
+          box-shadow: 0 1px 5px rgba(0,0,0,.3);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 15px;
+          line-height: 1;
+          transition: transform .15s;
+        }
+        .perfil-avatar-btn:hover:not(:disabled) .perfil-avatar-edit,
+        .perfil-avatar-btn:focus-visible .perfil-avatar-edit { transform: scale(1.12); }
+        .perfil-nombre {
+          font-size: 1.6rem;
+          font-weight: 700;
+          color: #111827;
+          line-height: 1.2;
+          margin: 0;
+          word-break: break-word;
+        }
+        .perfil-linea {
+          width: 44px;
+          height: 4px;
+          border-radius: 2px;
+          background: var(--naranja);
+          margin: 12px auto 0;
+        }
+
+        /* Franja de datos en la parte baja de la tarjeta */
+        .perfil-datos {
+          background: #f3f4f6;
+          border-radius: 0 0 16px 16px;
+          padding: 16px 24px;
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+          gap: 12px 20px;
+          text-align: left;
+        }
+        .perfil-dato { display: flex; flex-direction: column; min-width: 0; }
+        .perfil-dato-et {
+          font-size: 0.7rem;
+          color: #9ca3af;
+          text-transform: uppercase;
+          letter-spacing: .5px;
+        }
+        .perfil-dato-val { font-size: 0.9rem; color: #111827; word-break: break-word; }
+
+        /* Botones con efecto de "presionar": borde inferior que se hunde al hacer clic (no cambia colores) */
+        .perfil-tarjeta .btn,
+        .perfil-card .btn,
+        .perfil-portada-btn {
+          transition: transform .12s ease, box-shadow .12s ease;
+          box-shadow: 0 4px 0 rgba(0,0,0,.28);
+        }
+        .perfil-tarjeta .btn:hover:not(:disabled),
+        .perfil-card .btn:hover:not(:disabled),
+        .perfil-portada-btn:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 5px 0 rgba(0,0,0,.28), 0 8px 14px rgba(0,0,0,.16);
+        }
+        .perfil-tarjeta .btn:active:not(:disabled),
+        .perfil-card .btn:active:not(:disabled),
+        .perfil-portada-btn:active:not(:disabled) {
+          transform: translateY(4px);
+          box-shadow: 0 0 0 rgba(0,0,0,.28);
+        }
+        .perfil-tarjeta .btn:disabled,
+        .perfil-card .btn:disabled { box-shadow: none; }
+        /* Botón de cambiar contraseña un poco más abajo */
+        .perfil-btn-pw { margin-top: 26px; }
+        .perfil-avatar-edit { animation: latidoCamara 2.4s ease-in-out infinite; }
+        @keyframes latidoCamara {
+          0%, 100% { transform: scale(1); }
+          50%      { transform: scale(1.12); }
+        }
+
+        /* Tarjetas inferiores en dos columnas */
+        .perfil-grid {
+          max-width: 680px;
+          margin: 20px auto 0;
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+          gap: 16px;
+          align-items: start;
+        }
+        .perfil-card {
+          background: #fff;
+          border: 1px solid #e5e7eb;
+          border-radius: 16px;
+          padding: 20px;
+          box-shadow: 0 2px 8px rgba(0,0,0,.06);
+        }
+        .perfil-card-titulo {
+          font-size: 1.05rem;
+          font-weight: 700;
+          color: #000613;
+          margin: 0;
+        }
+        .perfil-card-linea {
+          width: 32px;
+          height: 3px;
+          border-radius: 2px;
+          background: var(--naranja);
+          margin: 6px 0 16px;
+        }
+
+        /* ═════════ Camión pequeño que cruza toda la pantalla ═════════ */
+        .truck-lane {
+          position: fixed; bottom: 0; left: 0; width: 100vw; height: 50px;
+          overflow: hidden; pointer-events: none; z-index: 10;
+        }
+        .truck-mover {
+          position: absolute; bottom: 4px; left: 0; width: 160px; height: 85px;
+          animation: driveAcross 14s linear infinite;
+        }
+        @keyframes driveAcross {
+          from { transform: translateX(-180px); }
+          to   { transform: translateX(100vw); }
+        }
+        .truck-scaler {
+          position: absolute; bottom: 0; left: 0; width: 160px; height: 85px;
+          transform: scale(0.42); transform-origin: bottom left;
+        }
+        .truck-animado {
+          position: absolute; bottom: 0; left: 0; width: 160px; height: 85px;
+          animation: bounceTruck 0.6s ease-in-out infinite alternate;
+        }
+        @keyframes bounceTruck {
+          0%   { transform: translateY(0); }
+          100% { transform: translateY(-3px); }
+        }
+        .truck-box { position: absolute; left: 0; top: 10px; width: 95px; height: 50px; background: #f05443; border: 2.5px solid #222; border-radius: 4px; }
+        .truck-box-stripe { position: absolute; top: 16px; left: 0; width: 95px; height: 14px; background: #6b6b6b; border-top: 2px solid #222; border-bottom: 2px solid #222; }
+        .truck-cab { position: absolute; left: 93px; top: 22px; width: 45px; height: 38px; background: #f3d4a0; border: 2.5px solid #222; border-top-left-radius: 14px; border-top-right-radius: 8px; border-bottom-right-radius: 4px; }
+        .truck-window { position: absolute; top: 6px; left: 6px; width: 22px; height: 16px; background: #fff; border: 2px solid #222; border-top-left-radius: 10px; }
+        .truck-base { position: absolute; bottom: 12px; left: 15px; width: 115px; height: 10px; background: #f05443; border: 2px solid #222; border-radius: 2px; }
+        .wheel-custom { width: 24px; height: 24px; background: #222; border: 3px solid #fff; border-radius: 50%; position: absolute; bottom: 0; box-shadow: 0 0 0 2px #222; animation: spin 0.8s linear infinite; }
+        .wheel-custom.left { left: 30px; }
+        .wheel-custom.right { left: 102px; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+          .perfil-avatar-edit { animation: none; }
+          .perfil-avatar-btn, .perfil-tarjeta .btn, .perfil-card .btn, .perfil-portada-btn { transition: none; }
+          .truck-mover, .truck-animado, .wheel-custom { animation: none; }
+          .truck-mover { transform: translateX(40px); }
+        }
+      `}</style>
+
       <Sidebar />
       <main className="main-content">
-        <div className="page-header">
-          <h1 className="page-title">👤 Mi perfil</h1>
-          <p className="page-subtitle">Tu foto y tu contraseña</p>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem', alignItems: 'start' }}>
-          {/* ── Foto y datos ── */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-              {previa
-                ? <img src={previa.url} alt="Vista previa de tu foto" style={{ width: 112, height: 112, borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--naranja)' }} />
-                : <Avatar usuario={user} size={112} />}
-              <div>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{user?.nombre_completo || user?.username}</div>
-                <span className={`badge badge-${user?.rol}`} style={{ fontSize: '0.7rem' }}>{ROL[user?.rol]}</span>
-              </div>
+        {/* ── Banner (colores por defecto o la foto elegida por el usuario) ── */}
+        <div className="perfil-banner-wrap">
+          <div
+            className={`perfil-banner${portada ? ' con-foto' : ''}`}
+            style={portada ? { backgroundImage: `url(${portada})` } : undefined}
+            aria-hidden="true"
+          />
+          <input ref={portadaRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={elegirPortada}
+            style={{ display: 'none' }} aria-label="Elegir foto de portada" />
+          <div className="perfil-portada-btns">
+            <button type="button" className="perfil-portada-btn" onClick={() => portadaRef.current?.click()} disabled={procesandoPortada}>
+              {procesandoPortada ? 'Procesando...' : portada ? ' Cambiar portada' : ' Poner foto de portada'}
+            </button>
+            {portada && (
+              <button type="button" className="perfil-portada-btn" onClick={quitarPortada}>Quitar</button>
+            )}
+          </div>
+          {errorPortada && (
+            <div role="alert" style={{ position: 'absolute', top: 52, right: 12, maxWidth: 300, zIndex: 3, background: '#fef2f2', color: '#991b1b', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', boxShadow: '0 1px 4px rgba(0,0,0,.2)' }}>
+              {errorPortada}
             </div>
+          )}
+        </div>
+        {/* ── Tarjeta de perfil ── */}
+        <section className="perfil-tarjeta" aria-label="Mi perfil">
+          <div className="perfil-tarjeta-top">
+            <div className="perfil-avatar">
+              <button
+                type="button"
+                className="perfil-avatar-btn"
+                onClick={() => inputRef.current?.click()}
+                disabled={procesando || guardandoFoto}
+                aria-label="Cambiar foto de perfil"
+                title="Cambiar foto de perfil"
+              >
+                {previa
+                  ? <img src={previa.url} alt="Vista previa de tu foto" style={{ width: 104, height: 104, objectFit: 'cover' }} />
+                  : <Avatar usuario={user} size={104} />}
+                <span className="perfil-avatar-edit" aria-hidden="true">📷</span>
+              </button>
+            </div>
+
+            <h1 className="perfil-nombre">{user?.nombre_completo || user?.username}</h1>
+            <span className={`badge badge-${user?.rol} perfil-rol`} style={{ fontSize: '0.7rem' }}>{ROL[user?.rol]}</span>
+            <div className="perfil-linea" />
 
             <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={elegirArchivo}
               style={{ display: 'none' }} aria-label="Elegir foto de perfil" />
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 16 }}>
-              {previa ? (
-                <>
-                  <button className="btn btn-primary btn-sm" onClick={guardarFoto} disabled={guardandoFoto}>
-                    {guardandoFoto ? 'Guardando...' : '💾 Guardar foto'}
-                  </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setPrevia(null)} disabled={guardandoFoto}>Cancelar</button>
-                </>
-              ) : (
-                <>
-                  <button className="btn btn-primary btn-sm" onClick={() => inputRef.current?.click()} disabled={procesando || guardandoFoto}>
-                    {procesando ? 'Procesando...' : user?.foto_version ? '📷 Cambiar foto' : '📷 Subir foto'}
-                  </button>
-                  {user?.foto_version && (
-                    <button className="btn btn-ghost btn-sm" onClick={quitarFoto} disabled={guardandoFoto}>Quitar foto</button>
-                  )}
-                </>
-              )}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: 8 }}>
-              JPG, PNG o WEBP. Se recorta en cuadrado automáticamente.
-            </div>
-            {errorFoto && <div role="alert" style={{ marginTop: 10, background: '#fef2f2', color: '#991b1b', padding: '8px 12px', borderRadius: 8, fontSize: '0.85rem' }}>{errorFoto}</div>}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px 16px', marginTop: 20, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
-              {dato('Usuario', user?.username)}
-              {dato('Correo', user?.email)}
-              {dato('Teléfono', user?.telefono)}
-              {dato('Puesto', user?.puesto)}
-              {dato('Empresa', user?.empresa)}
-            </div>
+            {previa ? (
+              <div className="perfil-foto-acciones">
+                <button className="btn btn-primary btn-sm" onClick={guardarFoto} disabled={guardandoFoto}>
+                  {guardandoFoto ? 'Guardando...' : '💾 Guardar foto'}
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setPrevia(null)} disabled={guardandoFoto}>Cancelar</button>
+              </div>
+            ) : null}
+            <div className="perfil-dato-et" style={{ marginTop: 10, textTransform: 'none' }}>
+  Toca tu foto para cambiarla. JPG, PNG o WEBP; se recorta en cuadrado automáticamente.
+</div>
+{errorFoto && (
+  <div role="alert" className="perfil-dato-et" style={{ margin: '10px auto 0', maxWidth: 420, color: '#ca1616' }}>
+    {errorFoto}
+  </div>
+)}
+</div>
+
+          <div className="perfil-datos">
+            {dato('Usuario', user?.username)}
+            {dato('Correo', user?.email)}
+            {dato('Teléfono', user?.telefono)}
+            {dato('Puesto', user?.puesto)}
+            {dato('Empresa', user?.empresa)}
           </div>
+        </section>
 
-          {/* ── Contraseña ── */}
-          <form className="card" onSubmit={cambiarPassword}>
-            <div style={{ fontWeight: 700, marginBottom: 12 }}>🔒 Cambiar contraseña</div>
+        {/* ── Tarjetas: foto y contraseña ── */}
+        <div className="perfil-grid">
+          {/* Contraseña */}
+          <form className="perfil-card" onSubmit={cambiarPassword}>
+            <h2 className="perfil-card-titulo">🔒 Cambiar contraseña</h2>
+            <div className="perfil-card-linea" />
             <div className="form-group">
               <label className="form-label">Contraseña actual</label>
               <PasswordInput autoComplete="current-password" {...campo('password_actual')} />
@@ -171,7 +498,7 @@ export default function PerfilPage() {
               <PasswordInput autoComplete="new-password" {...campo('confirmar_password')} />
             </div>
             {errorPw && <div role="alert" style={{ marginBottom: 12, background: '#fef2f2', color: '#991b1b', padding: '8px 12px', borderRadius: 8, fontSize: '0.85rem' }}>{errorPw}</div>}
-            <button className="btn btn-primary" type="submit" disabled={guardandoPw}>
+            <button className="btn btn-primary perfil-btn-pw" type="submit" disabled={guardandoPw}>
               {guardandoPw ? 'Guardando...' : 'Cambiar contraseña'}
             </button>
             <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: 10 }}>
@@ -180,6 +507,22 @@ export default function PerfilPage() {
           </form>
         </div>
       </main>
+
+      {/* ── Camión pequeño de reparto ── */}
+      <div className="truck-lane" aria-hidden="true">
+        <div className="truck-mover">
+          <div className="truck-scaler">
+            <div className="truck-animado">
+              <div className="truck-box"><div className="truck-box-stripe"></div></div>
+              <div className="truck-cab"><div className="truck-window"></div></div>
+              <div className="truck-base"></div>
+              <div className="wheel-custom left"></div>
+              <div className="wheel-custom right"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <Toast {...toast} onClose={() => setToast(t => ({ ...t, show: false }))} />
     </div>
   )

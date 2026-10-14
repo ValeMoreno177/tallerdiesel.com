@@ -5,10 +5,10 @@ import { getMenuItems } from '../utils/menuItems'
 
 // Qué explica cada pestaña del menú.
 const TEXTOS = {
-  '/cliente/dashboard': 'Aquí ves el resumen de tus servicios: cuántos están en curso, cuántos ya terminaron y si tienes pagos pendientes.',
-  '/solicitar-servicio': 'Pide ayuda a un coordinador. Él te asigna un técnico y le da seguimiento a tu servicio de principio a fin.',
+  '/cliente/dashboard': 'Aquí ves el resumen de tus servicios, cuántos están en curso, cuántos ya terminaron y si tienes pagos pendientes.',
+  '/solicitar-servicio': 'Pide ayuda a un coordinador. Él te asignara un técnico y le dara seguimiento a tu servicio de principio a fin .',
   '/solicitar-tecnico': 'Elige en el mapa a un técnico cercano y solicítalo directamente, sin pasar por un coordinador.',
-  '/cliente/bitacora': 'El historial de todos tus servicios: estatus, comentarios y evidencias. Aquí también confirmas cuándo se finaliza un servicio.',
+  '/cliente/bitacora': 'Aquí encontrarás el estatus de tus servicios, comentarios y evidencias.También podras visualizar cunado se finalice tu servicio.',
   '/admin/dashboard': 'Resumen ejecutivo del negocio: ingresos, ganancia, servicios en proceso y estado de las facturas.',
   '/coordinador/dashboard': 'Resumen de tus servicios: cuántos están en proceso, pendientes o finalizados.',
   '/admin/bitacora': 'El registro de todos los servicios (tickets). Agrega y edita servicios, asigna técnicos, revisa totales y facturas, y sube evidencias.',
@@ -22,8 +22,8 @@ const TEXTOS = {
 
 function construirPasos(user) {
   const pasos = [{
-    titulo: `¡Bienvenido${user?.nombre ? ', ' + user.nombre : ''} a TallerDiesel! 👋`,
-    texto: 'Te mostramos rápido para qué sirve cada sección. Puedes omitir el recorrido cuando quieras.',
+    titulo: `¡Bienvenido${user?.nombre ? ' ' + user.nombre : ''} a TallerDiesel! 👋`,
+    texto: 'Te mostramos rápido para qué sirve cada sección, Puedes omitir el recorrido cuando quieras.',
   }]
   getMenuItems(user).forEach(it => {
     pasos.push({
@@ -34,7 +34,7 @@ function construirPasos(user) {
     })
   })
   pasos.push({
-    target: '[data-tour="tutorial"]',
+    target: '[data-tour=""]',
     titulo: '¡Listo! 🎉',
     texto: 'Cuando quieras volver a ver este recorrido, usa el botón "Ver tutorial" del menú.',
   })

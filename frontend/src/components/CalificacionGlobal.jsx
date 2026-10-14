@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import api from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import useAutoRefresh, { refrescarAhora } from '../hooks/useAutoRefresh'
@@ -13,8 +13,9 @@ export const pedirCalificacion = (ticketId) =>
 
 /**
  * Solo para clientes. Cuando un servicio pasa a "Finalizado" (lo confirme el cliente o lo cierre
- * el coordinador/admin), a los ≤5 s aparece la ventana para calificar al técnico.
- *  - La ventana es obligatoria: no se puede aplazar ni cerrar sin enviar la calificación.
+ * el coordinador/admin), a los ≤30 s aparece la ventana para calificar al técnico y al servicio.
+ *  - "Más tarde" la oculta hasta recargar la página o volver a iniciar sesión;
+ *    mientras tanto sigue pendiente en la campana 🔔 y en la bitácora.
  *  - Una vez enviada la calificación no vuelve a pedirse.
  */
 export default function CalificacionGlobal() {
@@ -23,9 +24,11 @@ export default function CalificacionGlobal() {
   const [pendientes, setPendientes] = useState([])
   const [abierto, setAbierto] = useState(null)
   const [aviso, setAviso] = useState('')
+  const aplazados = useRef(new Set())
 
   // Al cambiar de usuario se limpia todo
   useEffect(() => {
+    aplazados.current = new Set()
     setPendientes([]); setAbierto(null)
   }, [user?.id])
 
@@ -36,10 +39,10 @@ export default function CalificacionGlobal() {
 
   useAutoRefresh(consultar, { activo: esCliente, inmediato: true })
 
-  // Abre la siguiente calificación pendiente
+  // Abre solo la siguiente pendiente que el cliente no haya pospuesto
   useEffect(() => {
     if (!esCliente || abierto) return
-    const siguiente = pendientes[0]
+    const siguiente = pendientes.find(p => !aplazados.current.has(p.id))
     if (siguiente) setAbierto(siguiente)
   }, [pendientes, abierto, esCliente])
 
@@ -62,6 +65,13 @@ export default function CalificacionGlobal() {
     return () => window.removeEventListener(EVENTO_CALIFICAR, alPedir)
   }, [esCliente])
 
+  const aplazar = useCallback(() => {
+    // "Más tarde" pospone TODAS las pendientes de esta sesión (no se encadenan ventanas)
+    pendientes.forEach(p => aplazados.current.add(p.id))
+    if (abierto) aplazados.current.add(abierto.id)
+    setAbierto(null)
+  }, [pendientes, abierto])
+
   const enviado = useCallback((id) => {
     // Se quita de inmediato de la lista local para que la ventana no se vuelva a abrir
     // mientras llega la respuesta del servidor.
@@ -75,7 +85,7 @@ export default function CalificacionGlobal() {
   if (!esCliente) return null
   return (
     <>
-      {abierto && <ModalCalificacion key={abierto.id} pendiente={abierto} onEnviado={enviado} />}
+      {abierto && <ModalCalificacion key={abierto.id} pendiente={abierto} onAplazar={aplazar} onEnviado={enviado} />}
       <Toast show={!!aviso} tipo="exito" titulo={aviso} onClose={() => setAviso('')} />
     </>
   )
