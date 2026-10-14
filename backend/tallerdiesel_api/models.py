@@ -159,79 +159,132 @@ class Operador(models.Model):
 
 class Ticket(models.Model):
     # Flujo: Pendiente → Atendido → En proceso → Finalizado
-    ESTATUS_CHOICES      = [
+    ESTATUS_CHOICES = [
         ('pendiente', 'Pendiente'),
-        ('atendido',  'En camino'),
-        ('proceso',   'Reparando'),
+        ('atendido', 'En camino'),
+        ('proceso', 'Reparando'),
         ('terminado', 'Finalizado'),
     ]
-    EST_FACTURA_CHOICES = [('pagada','Pagada'),('pendiente','Pendiente')]
 
-    # Folio consecutivo (TD001, TD002…). Se genera cuando el ticket se asigna a un coordinador; mientras
-    # está en espera queda vacío. Único solo entre los NO eliminados (ver Meta).
-    ticket_id  = models.CharField(max_length=20, blank=True)
-    empresa    = models.CharField(max_length=200)
-    fecha      = models.DateField()
-    estatus    = models.CharField(max_length=20, choices=ESTATUS_CHOICES, default='pendiente')
-    tipo_unidad= models.CharField(max_length=200, blank=True)
-    unidad     = models.CharField(max_length=200)
-    lugar      = models.CharField(max_length=200, blank=True)
-    # Ubicación del servicio en el mapa (la fija el coordinador al asignar técnico)
-    latitud    = models.FloatField(null=True, blank=True)
-    longitud   = models.FloatField(null=True, blank=True)
-    operador   = models.CharField(max_length=200, blank=True)
+    EST_FACTURA_CHOICES = [
+        ('pagada', 'Pagada'),
+        ('pendiente', 'Pendiente'),
+    ]
+
+    ticket_id = models.CharField(max_length=20, blank=True)
+    empresa = models.CharField(max_length=200)
+    fecha = models.DateField()
+    estatus = models.CharField(
+        max_length=20,
+        choices=ESTATUS_CHOICES,
+        default='pendiente',
+    )
+    tipo_unidad = models.CharField(max_length=200, blank=True)
+    unidad = models.CharField(max_length=200)
+    lugar = models.CharField(max_length=200, blank=True)
+
+    # Ubicación del servicio
+    latitud = models.FloatField(null=True, blank=True)
+    longitud = models.FloatField(null=True, blank=True)
+
+    # Operador como texto libre
+    operador = models.CharField(max_length=200, blank=True)
     reparacion = models.TextField(blank=True)
 
-    coordinador= models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
-                    related_name='tickets_coordinados', limit_choices_to={'rol__in':['coordinador','admin']})
-    operador   = models.ForeignKey(Operador, on_delete=models.SET_NULL, null=True, blank=True)
-    cliente    = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
-                    related_name='tickets_cliente', limit_choices_to={'rol':'cliente'})
-    tecnico    = models.ForeignKey('Tecnico', on_delete=models.SET_NULL, null=True, blank=True,
-                    related_name='tickets_asignados')
+    coordinador = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tickets_coordinados',
+        limit_choices_to={'rol__in': ['coordinador', 'admin']},
+    )
 
-    # Costos (nombres cortos = nombres del frontend)
-    sal_costo    = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    mo_costo     = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    ref_costo    = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cliente = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tickets_cliente',
+        limit_choices_to={'rol': 'cliente'},
+    )
+
+    tecnico = models.ForeignKey(
+        'Tecnico',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tickets_asignados',
+    )
+
+    # Costos y ganancias
+    sal_costo = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    mo_costo = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    ref_costo = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
     sal_ganancia = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    mo_ganancia  = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    mo_ganancia = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     ref_ganancia = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     # Factura
-    factura         = models.CharField(max_length=50, blank=True)
-    fecha_factura   = models.DateField(null=True, blank=True)
-    estatus_factura = models.CharField(max_length=20, choices=EST_FACTURA_CHOICES, blank=True, default='pendiente')
+    factura = models.CharField(max_length=50, blank=True)
+    fecha_factura = models.DateField(null=True, blank=True)
+    estatus_factura = models.CharField(
+        max_length=20,
+        choices=EST_FACTURA_CHOICES,
+        blank=True,
+        default='pendiente',
+    )
 
     puede_editar_coordinador = models.BooleanField(default=False)
-    # El Coordinador solicita finalizar; el Cliente decide si se finaliza o no.
     finalizacion_solicitada = models.BooleanField(default=False)
-    alerta_sla_enviada = models.BooleanField(default=False)  # evita duplicar alertas de SLA
-    fecha_ultimo_mensaje_cliente = models.DateTimeField(null=True, blank=True)
-    fecha_ultima_respuesta_coordinador = models.DateTimeField(null=True, blank=True)
+    alerta_sla_enviada = models.BooleanField(default=False)
+
+    fecha_ultimo_mensaje_cliente = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+    fecha_ultima_respuesta_coordinador = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
     alerta_respuesta_sla_enviada = models.BooleanField(default=False)
+
     tipo_solicitud = models.CharField(
         max_length=20,
-        choices=[('coordinador','Coordinador'),('tecnico','Técnico')],
-        default='coordinador'
-    )  # Admin otorga permiso de edición al coordinador para este ticket
-    fecha_creacion      = models.DateTimeField(auto_now_add=True)
-    fecha_actualizacion = models.DateTimeField(auto_now=True)
-    # Momento en que el servicio pasó a "Finalizado" (se usa para pedir la calificación al cliente).
-    fecha_finalizacion  = models.DateTimeField(null=True, blank=True)
+        choices=[
+            ('coordinador', 'Coordinador'),
+            ('tecnico', 'Técnico'),
+        ],
+        default='coordinador',
+    )
 
-    # ── Papelera (borrado suave) ──────────────────────────────────────────
-    eliminado    = models.BooleanField(default=False)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+    fecha_finalizacion = models.DateTimeField(null=True, blank=True)
+
+    # Papelera: borrado suave
+    eliminado = models.BooleanField(default=False)
     eliminado_en = models.DateTimeField(null=True, blank=True)
-    eliminado_por = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
-                        related_name='tickets_eliminados')
+    eliminado_por = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tickets_eliminados',
+    )
 
     class Meta:
         ordering = ['-fecha_creacion']
         constraints = [
-            models.UniqueConstraint(fields=['ticket_id'],
-                                    condition=models.Q(eliminado=False) & ~models.Q(ticket_id=''),
-                                    name='ticket_id_unico_entre_activos'),
+            models.UniqueConstraint(
+                fields=['ticket_id'],
+                condition=(
+                    models.Q(eliminado=False)
+                    & ~models.Q(ticket_id='')
+                ),
+                name='ticket_id_unico_entre_activos',
+            ),
         ]
 
     def __str__(self):
@@ -239,47 +292,59 @@ class Ticket(models.Model):
 
     @property
     def etiqueta(self):
-        """Cómo nombrar al ticket en avisos y correos: su folio, o «Solicitud #n» mientras espera coordinador."""
         return self.ticket_id or f'Solicitud #{self.pk}'
 
     @staticmethod
     def _siguiente_folio():
         import re
+
         max_num = 0
-        for tid in Ticket.objects.filter(eliminado=False).exclude(ticket_id='').values_list('ticket_id', flat=True):
+        tickets = (
+            Ticket.objects
+            .filter(eliminado=False)
+            .exclude(ticket_id='')
+            .values_list('ticket_id', flat=True)
+        )
+
+        for tid in tickets:
             m = re.match(r'TD(\d+)$', tid)
             if m:
                 max_num = max(max_num, int(m.group(1)))
+
         return f'TD{max_num + 1:03d}'
 
     def asignar_folio(self):
-        """Le pone el siguiente folio consecutivo si aún no lo tiene (se llama al asignarlo a un coordinador).
-        Seguro ante dos asignaciones a la vez: si el folio ya lo tomó otro ticket, reintenta con el siguiente."""
         from django.db import IntegrityError, transaction
+
         if self.ticket_id:
             return self.ticket_id
+
         for _ in range(10):
             folio = self._siguiente_folio()
             try:
                 with transaction.atomic():
-                    filas = Ticket.objects.filter(pk=self.pk, ticket_id='').update(ticket_id=folio)
+                    filas = Ticket.objects.filter(
+                        pk=self.pk,
+                        ticket_id='',
+                    ).update(ticket_id=folio)
             except IntegrityError:
                 continue
+
             if filas:
                 self.ticket_id = folio
-            else:                       # otro proceso ya le puso folio a este ticket
+            else:
                 self.refresh_from_db(fields=['ticket_id'])
+
             return self.ticket_id
+
         raise RuntimeError('No se pudo generar el folio del ticket.')
 
     def save(self, *args, **kwargs):
-        # El folio se genera cuando el ticket tiene coordinador. Un ticket sin coordinador (solicitud en
-        # espera) no consume folio todavía.
         if not self.ticket_id and self.coordinador_id:
             self.ticket_id = self._siguiente_folio()
         super().save(*args, **kwargs)
 
-    # ── Fórmulas (exactas al requerimiento) ──────────────────────────────────
+    # Fórmulas de costos
     @property
     def costo(self):
         return self.sal_costo + self.mo_costo + self.ref_costo
@@ -290,32 +355,26 @@ class Ticket(models.Model):
 
     @property
     def total(self):
-        # Total = Costo Total + Ganancia Total
         return self.costo + self.ganancia
 
     @property
     def iva(self):
-        # IVA = Total * 0.16
         return self.total * Decimal('0.16')
 
     @property
     def neto(self):
-        # NETO = Total + IVA
         return self.total + self.iva
 
     @property
     def isr(self):
-        # ISR = Total * 0.0125
         return self.total * Decimal('0.0125')
 
     @property
     def total_f(self):
-        # Total Final = Neto - ISR
         return self.neto - self.isr
 
     @property
     def comision(self):
-        # Comisión = Ganancia * 0.15
         return self.ganancia * Decimal('0.15')
 
 
