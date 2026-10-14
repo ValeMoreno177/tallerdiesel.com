@@ -49,3 +49,31 @@ function cargarImagen(archivo) {
     img.src = url
   })
 }
+
+// Reduce una foto (p. ej. tomada con la cámara del celular) antes de subirla como evidencia del
+// chat: lado mayor de máximo `ladoMax` px, en JPEG. Los PDF y archivos que no son imagen se regresan
+// tal cual. Si algo falla al procesarla, se sube la original para no bloquear al usuario.
+export async function comprimirEvidencia(archivo, ladoMax = 1600, calidad = 0.82) {
+  if (!archivo || !archivo.type || !archivo.type.startsWith('image/')) return archivo
+  try {
+    const img = await cargarImagen(archivo)
+    const escala = Math.min(1, ladoMax / Math.max(img.width, img.height))
+    const ancho = Math.round(img.width * escala)
+    const alto = Math.round(img.height * escala)
+    const canvas = document.createElement('canvas')
+    canvas.width = ancho
+    canvas.height = alto
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'                                // PNG con transparencia sobre blanco
+    ctx.fillRect(0, 0, ancho, alto)
+    ctx.drawImage(img, 0, 0, ancho, alto)
+    if (img.close) img.close()
+
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', calidad))
+    if (!blob || blob.size >= archivo.size) return archivo     // no vale la pena: se queda la original
+    const base = (archivo.name || 'foto').replace(/\.[^.]+$/, '') || 'foto'
+    return new File([blob], `${base}.jpg`, { type: 'image/jpeg', lastModified: Date.now() })
+  } catch {
+    return archivo
+  }
+}
