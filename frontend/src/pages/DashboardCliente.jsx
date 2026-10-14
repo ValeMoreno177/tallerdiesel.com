@@ -7,19 +7,11 @@ import api from '../api/client'
 import CampanaNotificaciones from '../components/CampanaNotificaciones'
 import { useAuth } from '../context/AuthContext'
 import useAutoRefresh from '../hooks/useAutoRefresh'
+import LineaTiempoEstatus from '../components/LineaTiempoEstatus'
 
-const PASOS = ['pendiente','atendido','proceso','terminado']
-const LABELS = { pendiente:'Pendiente', atendido:'En camino', proceso:'Reparando', terminado:'Finalizado' }
 
 function MiniBarra({ estatus }) {
-  const idx = PASOS.indexOf(estatus)
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 6 }}>
-      {PASOS.map((p, i) => (
-        <div key={p} style={{ flex: 1, height: 4, borderRadius: 2, background: i <= idx ? '#1a56db' : '#e5e7eb' }} title={LABELS[p]} />
-      ))}
-    </div>
-  )
+  return <LineaTiempoEstatus estatus={estatus} compacto />
 }
 
 export default function DashboardCliente() {

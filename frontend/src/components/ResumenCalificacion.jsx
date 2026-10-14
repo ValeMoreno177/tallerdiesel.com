@@ -98,7 +98,7 @@ function FuegosArtificiales({ duracion = 4000, onFin }) {
 }
 
 /**
- * Calificación ya enviada por el cliente (solo lectura): estrellas al técnico y al servicio + comentario.
+ * Calificación ya enviada por el cliente (solo lectura): estrellas al técnico + comentario.
  * Con `celebrar` muestra el agradecimiento y lanza fuegos artificiales
  * (úsalo justo después de que el cliente envía su calificación).
  */
@@ -129,10 +129,6 @@ export default function ResumenCalificacion({
               <Estrellas valor={detalle.calificacion_tecnico} soloLectura tamano={20} etiqueta="Calificación del técnico" />
             </div>
           )}
-          <div>
-            <div style={{ fontSize: '0.75rem', color: '#92400e' }}>Servicio</div>
-            <Estrellas valor={detalle.calificacion_servicio} soloLectura tamano={20} etiqueta="Calificación del servicio" />
-          </div>
         </div>
         {detalle.comentario && (
           <div style={{ marginTop: 6, fontStyle: 'italic', color: '#57534e' }}>“{detalle.comentario}”</div>

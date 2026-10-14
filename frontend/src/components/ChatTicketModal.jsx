@@ -4,6 +4,7 @@ import EvidenciaBurbuja from './EvidenciaBurbuja'
 import { useAuth } from '../context/AuthContext'
 import useAutoRefresh from '../hooks/useAutoRefresh'
 import { NOTIFICACIONES_MS } from '../config/tiempos'
+import { comprimirEvidencia } from '../utils/imagen'
 
 export function BotonChat({ ticket, onClick, compacto = false }) {
   const pendientes = Math.max(0, Number(ticket.mensajes_no_leidos) || 0)
@@ -159,8 +160,9 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
     setError('')
     try {
       for (const archivo of archivos) {
+        const listo = await comprimirEvidencia(archivo)   // las fotos de cámara se reducen antes de subir
         const form = new FormData()
-        form.append('archivo', archivo)
+        form.append('archivo', listo, listo.name)
         const { data } = await api.post(`/tickets/${ticket.id}/subir_evidencia/`, form)
         setEvidenciasTicket(data.evidencias || [])
       }
@@ -233,7 +235,7 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
                 display: 'flex', justifyContent: mio ? 'flex-end' : 'flex-start', marginBottom: 10,
               }}>
                 <article style={{
-                  maxWidth: '85%', minWidth: 120, padding: '9px 12px',
+                  maxWidth: '85%', minWidth: editandoId === comentario.id ? '75%' : 120, padding: '9px 12px',
                   borderRadius: mio ? '14px 14px 3px 14px' : '14px 14px 14px 3px',
                   background: mio ? '#dbeafe' : 'white', border: '1px solid #e2e8f0',
                   boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
@@ -248,19 +250,24 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
                   {evidencia ? (
                     <EvidenciaBurbuja ticketId={ticket.id} evidencia={evidencia} />
                   ) : editandoId === comentario.id ? (
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <input
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220 }}>
+                      <textarea
                         className="form-input"
+                        rows={3}
                         value={textoEdicion}
                         autoFocus
+                        onFocus={event => event.target.setSelectionRange(event.target.value.length, event.target.value.length)}
                         onChange={event => setTextoEdicion(event.target.value)}
                         onKeyDown={event => {
-                          if (event.key === 'Enter') guardarEdicion(comentario.id)
-                          if (event.key === 'Escape') setEditandoId(null)
+                          if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); guardarEdicion(comentario.id) }
+                          if (event.key === 'Escape') { event.stopPropagation(); setEditandoId(null) }
                         }}
+                        style={{ width: '100%', resize: 'vertical', boxSizing: 'border-box' }}
                       />
-                      <button className="btn btn-primary btn-sm" onClick={() => guardarEdicion(comentario.id)}>Guardar</button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => setEditandoId(null)}>Cancelar</button>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setEditandoId(null)}>Cancelar</button>
+                        <button className="btn btn-primary btn-sm" onClick={() => guardarEdicion(comentario.id)}>Guardar</button>
+                      </div>
                     </div>
                   ) : (
                     <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: '#1f2937', fontSize: '0.9rem' }}>

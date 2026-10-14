@@ -8,37 +8,9 @@ import ChatTicketModal, { BotonChat } from '../components/ChatTicketModal'
 import ResumenCalificacion from '../components/ResumenCalificacion'
 import { pedirCalificacion } from '../components/CalificacionGlobal'
 import useAutoRefresh from '../hooks/useAutoRefresh'
+import LineaTiempoEstatus from '../components/LineaTiempoEstatus'
 
-const PASOS = ['pendiente', 'atendido', 'proceso', 'terminado']
 const ETIQUETAS = { pendiente: 'Pendiente', atendido: 'En camino', proceso: 'Reparando', terminado: 'Finalizado' }
-
-function PasosTicket({ estatus }) {
-  const indiceActual = PASOS.indexOf(estatus)
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', margin: '0.75rem 0' }}>
-      {PASOS.map((paso, i) => (
-        <div key={paso} style={{ display: 'flex', alignItems: 'center', flex: i < PASOS.length - 1 ? 1 : 'none' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 64 }}>
-            <div style={{
-              width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.7rem', fontWeight: 700,
-              background: i <= indiceActual ? '#1a56db' : '#e5e7eb',
-              color: i <= indiceActual ? 'white' : '#9ca3af',
-            }}>
-              {i < indiceActual ? '✓' : i + 1}
-            </div>
-            <span style={{ fontSize: '0.68rem', marginTop: 4, color: i <= indiceActual ? '#111827' : '#9ca3af', textAlign: 'center' }}>
-              {ETIQUETAS[paso]}
-            </span>
-          </div>
-          {i < PASOS.length - 1 && (
-            <div style={{ flex: 1, height: 3, background: i < indiceActual ? '#1a56db' : '#e5e7eb', marginBottom: 16 }} />
-          )}
-        </div>
-      ))}
-    </div>
-  )
-}
 
 function TicketCard({ t, onUpdated, onOpenChat }) {
   const finalizado = t.estatus === 'terminado'
@@ -92,7 +64,7 @@ function TicketCard({ t, onUpdated, onOpenChat }) {
       {/* La línea de tiempo por estatus no aplica a servicios directos con técnico,
           ya que nadie actualiza esos pasos — solo se muestra si ya se sumó un coordinador. */}
       {(t.tipo_solicitud !== 'tecnico' || t.coordinador_nombre) && (
-        <PasosTicket estatus={t.estatus} />
+        <LineaTiempoEstatus estatus={t.estatus} />
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, fontSize: '0.85rem', color: '#374151', marginTop: 4 }}>

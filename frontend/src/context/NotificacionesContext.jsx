@@ -8,6 +8,7 @@ import Toast from '../components/Toast'
 // ── Sonido de notificación generado con Web Audio API (sin archivos externos) ──
 let contextoAudio = null
 let sonidoPendiente = false
+let silenciado = false   // lo actualiza el proveedor cuando el usuario silencia con el botón 🔊/🔇
 
 function tocarSonido(ctx) {
   const tiempos = [0, 0.15, 0.3]
@@ -17,13 +18,59 @@ function tocarSonido(ctx) {
     const gain = ctx.createGain()
     osc.connect(gain)
     gain.connect(ctx.destination)
-    osc.type = 'sine'
+    osc.type = 'triangle'
     osc.frequency.setValueAtTime(frecuencias[i], ctx.currentTime + t)
-    gain.gain.setValueAtTime(0.3, ctx.currentTime + t)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2)
+    gain.gain.setValueAtTime(0.5, ctx.currentTime + t)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.25)
     osc.start(ctx.currentTime + t)
-    osc.stop(ctx.currentTime + t + 0.2)
+    osc.stop(ctx.currentTime + t + 0.25)
   })
+}
+
+// Fanfarria corta para cuando el cliente termina de calificar (acompaña a los fuegos artificiales)
+function tocarCelebracion(ctx) {
+  const notas = [523, 659, 784, 1047, 784, 1047]          // do, mi, sol, do alto...
+  const inicios = [0, 0.14, 0.28, 0.42, 0.66, 0.8]
+  notas.forEach((f, i) => {
+    const t0 = ctx.currentTime + inicios[i]
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(f, t0)
+    gain.gain.setValueAtTime(0.5, t0)
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.35)
+    osc.start(t0); osc.stop(t0 + 0.35)
+  })
+  // "Pops" de los fuegos artificiales
+  for (let i = 0; i < 6; i++) {
+    const t0 = ctx.currentTime + 0.2 + i * 0.5
+    const largo = Math.floor(ctx.sampleRate * 0.18)
+    const buffer = ctx.createBuffer(1, largo, ctx.sampleRate)
+    const datos = buffer.getChannelData(0)
+    for (let j = 0; j < largo; j++) datos[j] = (Math.random() * 2 - 1) * (1 - j / largo)
+    const ruido = ctx.createBufferSource()
+    const gain = ctx.createGain()
+    ruido.buffer = buffer
+    ruido.connect(gain); gain.connect(ctx.destination)
+    gain.gain.setValueAtTime(0.35, t0)
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.18)
+    ruido.start(t0)
+  }
+}
+
+export function reproducirCelebracion() {
+  if (silenciado) return
+  try {
+    const AudioContextAPI = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextAPI) return
+    if (!contextoAudio || contextoAudio.state === 'closed') contextoAudio = new AudioContextAPI()
+    const sonar = () => { if (contextoAudio.state === 'running') tocarCelebracion(contextoAudio) }
+    if (contextoAudio.state === 'suspended') contextoAudio.resume().then(sonar).catch(() => {})
+    else sonar()
+  } catch (e) {
+    console.warn('Audio no disponible:', e)
+  }
 }
 
 function reproducirPendiente(ctx) {
@@ -92,7 +139,7 @@ export function NotificacionesProvider({ children }) {
   const vistas = useRef(null)          // ids ya conocidos; null = aún no se hace la primera carga
   const sonidoRef = useRef(true)
   const usuarioPrevio = useRef(null)   // para distinguir un cierre de sesión de la carga inicial
-  useEffect(() => { sonidoRef.current = sonidoActivo }, [sonidoActivo])
+  useEffect(() => { sonidoRef.current = sonidoActivo; silenciado = !sonidoActivo }, [sonidoActivo])
 
   useEffect(() => {
     if (!user || !sonidoActivo) return undefined
@@ -103,6 +150,9 @@ export function NotificacionesProvider({ children }) {
       })
     }
     eventos.forEach(evento => document.addEventListener(evento, desbloquear))
+    // Intenta activarlo ya: funciona si el usuario ya tocó la página (p. ej. al iniciar sesión);
+    // si no, se activa con el primer clic, tecla o toque.
+    desbloquear()
     return () => eventos.forEach(evento => document.removeEventListener(evento, desbloquear))
   }, [user?.id, sonidoActivo])
 

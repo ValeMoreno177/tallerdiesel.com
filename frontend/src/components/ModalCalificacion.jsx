@@ -1,28 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import api from '../api/client'
 import Estrellas from './Estrellas'
+import { reproducirCelebracion } from '../context/NotificacionesContext'
 
 const MAX_COMENTARIO = 500
 const DURACION_FUEGOS = 3500 // ms que dura el espectáculo
 const CIERRE_CON_FUEGOS = 4200 // ms antes de cerrar la ventana para que se alcancen a ver
-const CIERRE_SIN_FUEGOS = 1800 // ms si el usuario tiene animaciones reducidas
 
 const COLORES = ['#f59e0b', '#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899', '#fde047']
-
-const reducirMovimiento = () =>
-  typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
 /** Fuegos artificiales a pantalla completa. No bloquea clics. Llama onFin al terminar. */
 function FuegosArtificiales({ duracion = DURACION_FUEGOS, onFin }) {
   const canvasRef = useRef(null)
 
   useEffect(() => {
-    // Respeta a quienes tienen desactivadas las animaciones
-    if (reducirMovimiento()) {
-      onFin?.()
-      return undefined
-    }
-
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
     const ajustar = () => {
@@ -41,8 +32,8 @@ function FuegosArtificiales({ duracion = DURACION_FUEGOS, onFin }) {
       const x = canvas.width * (0.15 + Math.random() * 0.7)
       const y = canvas.height * (0.15 + Math.random() * 0.4)
       const color = COLORES[Math.floor(Math.random() * COLORES.length)]
-      for (let i = 0; i < 70; i++) {
-        const ang = (Math.PI * 2 * i) / 70
+      for (let i = 0; i < 90; i++) {
+        const ang = (Math.PI * 2 * i) / 90
         const vel = 1.5 + Math.random() * 4
         particulas.push({
           x, y,
@@ -63,7 +54,7 @@ function FuegosArtificiales({ duracion = DURACION_FUEGOS, onFin }) {
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.globalCompositeOperation = 'lighter'
 
-      if (transcurrido < duracion - 1000 && t - ultimoDisparo > 450) {
+      if (transcurrido < duracion - 1000 && t - ultimoDisparo > 350) {
         explotar()
         ultimoDisparo = t
       }
@@ -78,7 +69,7 @@ function FuegosArtificiales({ duracion = DURACION_FUEGOS, onFin }) {
         ctx.globalAlpha = Math.max(p.vida, 0)
         ctx.fillStyle = p.color
         ctx.beginPath()
-        ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2)
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
         ctx.fill()
       }
       ctx.globalAlpha = 1
@@ -115,7 +106,7 @@ function FuegosArtificiales({ duracion = DURACION_FUEGOS, onFin }) {
  *
  * `pendiente` = { id, ticket_id, tecnico_nombre, unidad, tipo_unidad }
  */
-export default function ModalCalificacion({ pendiente, onAplazar, onEnviado }) {
+export default function ModalCalificacion({ pendiente, onEnviado }) {
   const tieneTecnico = !!pendiente.tecnico_nombre
   const [calTecnico, setCalTecnico] = useState(0)
   const [comentario, setComentario] = useState('')
@@ -127,17 +118,10 @@ export default function ModalCalificacion({ pendiente, onAplazar, onEnviado }) {
 
   const listo = tieneTecnico && calTecnico > 0
 
-  // Esc = "Más tarde"
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && !enviando && !enviado) onAplazar() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [enviando, enviado, onAplazar])
-
   // Tras agradecer (y ver los fuegos artificiales), se cierra sola
   useEffect(() => {
     if (!enviado) return undefined
-    const espera = reducirMovimiento() ? CIERRE_SIN_FUEGOS : CIERRE_CON_FUEGOS
+    const espera = CIERRE_CON_FUEGOS
     const t = setTimeout(() => onEnviado(pendiente.id), espera)
     return () => clearTimeout(t)
   }, [enviado, onEnviado, pendiente.id])
@@ -151,6 +135,7 @@ export default function ModalCalificacion({ pendiente, onAplazar, onEnviado }) {
         comentario: comentario.trim(),
       })
       setEnviado(true)
+      reproducirCelebracion()
     } catch (e) {
       setError(e.response?.data?.error || 'No se pudo enviar tu calificación. Intenta de nuevo.')
     } finally { setEnviando(false) }
@@ -202,7 +187,6 @@ export default function ModalCalificacion({ pendiente, onAplazar, onEnviado }) {
               <div role="alert" style={{ background: '#fef2f2', color: '#991b1b', padding: '8px 12px', borderRadius: 8, fontSize: '0.85rem' }}>{error}</div>
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button type="button" className="btn btn-ghost" disabled={enviando} onClick={onAplazar}>Más tarde</button>
               <button type="button" className="btn btn-primary" disabled={!listo || enviando} onClick={enviar}>
                 {enviando ? 'Enviando...' : 'Enviar calificación'}
               </button>

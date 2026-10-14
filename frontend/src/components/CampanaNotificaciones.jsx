@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useNotificaciones } from '../context/NotificacionesContext'
+import { useNotificaciones, activarSonido } from '../context/NotificacionesContext'
 import { pedirCalificacion } from './CalificacionGlobal'
 import api from '../api/client'
 
@@ -82,7 +82,7 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
 
   const handleCampanaClick = () => {
     // Primer click activa el contexto de audio (requerido por navegadores)
-    try { new (window.AudioContext || window.webkitAudioContext)() } catch {}
+    activarSonido()
     setAbierto(!abierto)
   }
 

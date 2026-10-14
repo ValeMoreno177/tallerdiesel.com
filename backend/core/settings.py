@@ -124,6 +124,10 @@ if AWS_STORAGE_BUCKET_NAME:
     AWS_DEFAULT_ACL = None
     AWS_QUERYSTRING_AUTH = True
     AWS_S3_SIGNATURE_VERSION = 's3v4'
+elif os.environ.get('DATABASE_URL'):
+    # Producción sin bucket: las evidencias se guardan en la base de datos para que no se
+    # pierdan con cada despliegue (el disco de Railway es temporal).
+    STORAGES['default'] = {'BACKEND': 'tallerdiesel_api.storage.AlmacenamientoBD'}
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
