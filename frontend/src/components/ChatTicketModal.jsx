@@ -156,7 +156,10 @@ export default function ChatTicketModal({ ticket, onClose, onRead }) {
     setEvidenciasTicket(ticket.evidencias || [])
     if (!ticket.evidencias) {
       api.get(`/tickets/${ticket.id}/`)
-        .then(({ data }) => setEvidenciasTicket(data.evidencias || []))
+        .then(({ data }) => {
+          setEvidenciasTicket(data.evidencias || [])
+          setTicketInfo(prev => ({ ...data, ...prev, ...data }))   // al abrirlo desde una notificación solo trae el id
+        })
         .catch(err => setError(err?.response?.data?.detail || 'No se pudieron cargar los datos del servicio.'))
     }
   }, [ticket])

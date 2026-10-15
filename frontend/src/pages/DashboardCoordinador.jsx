@@ -121,12 +121,16 @@ export default function DashboardCoordinador() {
                 </div>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Ticket</th><th>Empresa</th><th>Fecha</th><th>Estatus</th><th>Chat</th><th>Unidad</th><th>Lugar</th><th>Tipo</th><th>Técnico / Coord.</th><th>Total</th><th>IVA</th><th>Factura</th><th>Ver</th></tr></thead>
+                    <thead><tr><th>Ticket</th><th>Empresa</th><th>Fecha</th><th>Estatus</th><th>Chat</th><th>Unidad</th><th>Lugar</th><th>Tipo</th><th>Técnico / Coord.</th><th>Total</th><th>IVA</th><th>Factura</th></tr></thead>
                     <tbody>
-                      {!data?.tickets?.length && <tr><td colSpan={13} style={{ textAlign: 'center', color: '#9ca3af', padding: '2rem' }}>Sin tickets</td></tr>}
+                      {!data?.tickets?.length && <tr><td colSpan={12} style={{ textAlign: 'center', color: '#9ca3af', padding: '2rem' }}>Sin tickets</td></tr>}
                       {data?.tickets?.map(t => (
                         <tr key={t.id}>
-                          <td className="td-link">{t.etiqueta || t.ticket_id}</td>
+                          <td>
+                            <span className="td-link" role="button" tabIndex={0} title="Ver detalle"
+                              onClick={() => setTicketSel(t)}
+                              onKeyDown={e => e.key === 'Enter' && setTicketSel(t)}>{t.etiqueta || t.ticket_id}</span>
+                          </td>
                           <td>{t.empresa}</td>
                           <td>{t.fecha}</td>
                           <td><span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span></td>
@@ -138,7 +142,6 @@ export default function DashboardCoordinador() {
                           <td style={{ fontWeight: 600 }}>${parseFloat(t.total || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
                           <td className="td-naranja">${parseFloat(t.iva || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
                           <td>{t.factura || '—'}</td>
-                          <td><button className="btn btn-sm btn-ghost" onClick={() => setTicketSel(t)}>👁 Ver</button></td>
                         </tr>
                       ))}
                     </tbody>

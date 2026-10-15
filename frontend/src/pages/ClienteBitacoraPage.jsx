@@ -11,14 +11,12 @@ import useAutoRefresh from '../hooks/useAutoRefresh'
 import LineaTiempoEstatus from '../components/LineaTiempoEstatus'
 import CamionTitulo from '../components/CamionTitulo'
 import { EsqueletoTarjetas } from '../components/Esqueleto'
+import { BotonUbicacionEnVivo } from '../components/UbicacionEnVivo'
 
 const ETIQUETAS = { pendiente: 'Pendiente', atendido: 'En camino', proceso: 'Reparando', terminado: 'Finalizado' }
 
 function TicketCard({ t, onUpdated, onOpenChat }) {
   const finalizado = t.estatus === 'terminado'
-  const [editando, setEditando] = useState(false)
-  const [form, setForm] = useState({ tipo_unidad: t.tipo_unidad || '', unidad: t.unidad || '', reparacion: t.reparacion || '' })
-  const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
   const [respondiendo, setRespondiendo] = useState(false)
 
@@ -33,39 +31,22 @@ function TicketCard({ t, onUpdated, onOpenChat }) {
     finally { setRespondiendo(false) }
   }
 
-  const guardar = async () => {
-    setGuardando(true); setError('')
-    try {
-      await api.patch(`/tickets/${t.id}/`, form)
-      setEditando(false)
-      onUpdated()
-    } catch (e) {
-      setError(e.response?.data?.error || 'No se pudo guardar el cambio.')
-    } finally { setGuardando(false) }
-  }
-
   return (
     <div className="card" id={`ticket-${t.id}`}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-        <div>
-          <span style={{ fontFamily: 'Bebas Neue', fontSize: '1.2rem', letterSpacing: 1 }}>{t.ticket_id || 'Por asignar'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'Bebas Neue', fontSize: '1.2rem', letterSpacing: 1 }}>{t.ticket_id || t.etiqueta || 'Por asignar'}</span>
           <span style={{ color: '#6b7280', fontSize: '0.85rem', marginLeft: 10 }}>
             {t.tipo_unidad ? `${t.tipo_unidad} — ` : ''}{t.unidad} • {t.lugar || 'Sin ubicación'}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className={`badge badge-${t.estatus}`}>{t.estatus_display || ETIQUETAS[t.estatus] || t.estatus}</span>
-          {!finalizado && (
-            <button className="btn btn-sm btn-ghost" onClick={() => setEditando(v => !v)} title="Editar unidad / descripción">
-              {editando ? '✕ Cancelar' : '✏️ Editar'}
-            </button>
-          )}
         </div>
       </div>
 
-      {/* La línea de tiempo por estatus no aplica a servicios directos con técnico,
-          ya que nadie actualiza esos pasos — solo se muestra si ya se sumó un coordinador. */}
-      {(t.tipo_solicitud !== 'tecnico' || t.coordinador_nombre) && (
+      {/* La línea de tiempo por estatus NO se muestra en tickets directos con técnico. */}
+      {t.tipo_solicitud !== 'tecnico' && (
         <LineaTiempoEstatus estatus={t.estatus} />
       )}
 
@@ -75,6 +56,12 @@ function TicketCard({ t, onUpdated, onOpenChat }) {
         <span>📅 {t.fecha}</span>
       </div>
 
+      {!finalizado && (
+        <div style={{ marginTop: 10 }}>
+          <BotonUbicacionEnVivo ticket={t} />
+        </div>
+      )}
+
       {solicitudPendiente && (
         <div style={{ marginTop: 12, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: '0.85rem', color: '#92400e' }}>
           ⏳ Tu coordinador solicita finalizar este servicio. ¿Ya puede finalizarse?
@@ -82,6 +69,7 @@ function TicketCard({ t, onUpdated, onOpenChat }) {
             <button className="btn btn-primary btn-sm" disabled={respondiendo} onClick={() => responderFinalizacion(true)}>✅ Sí, finalizar</button>
             <button className="btn btn-ghost btn-sm" disabled={respondiendo} onClick={() => responderFinalizacion(false)}>↩️ No, aún no</button>
           </div>
+          {error && <div role="alert" style={{ marginTop: 6, color: '#991b1b' }}>{error}</div>}
         </div>
       )}
 
@@ -99,29 +87,7 @@ function TicketCard({ t, onUpdated, onOpenChat }) {
         </div>
       )}
 
-      {editando && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px dashed #e5e7eb', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {error && <div style={{ background: '#fef2f2', color: '#991b1b', padding: '6px 10px', borderRadius: 6, fontSize: '0.8rem' }}>{error}</div>}
-          <div className="form-group">
-            <label className="form-label">Tipo de unidad</label>
-            <input className="form-input" value={form.tipo_unidad} onChange={e => setForm({ ...form, tipo_unidad: e.target.value })} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Unidad</label>
-            <input className="form-input" value={form.unidad} onChange={e => setForm({ ...form, unidad: e.target.value })} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Descripción del problema</label>
-            <textarea className="form-input" rows={3} style={{ resize: 'none' }}
-              value={form.reparacion} onChange={e => setForm({ ...form, reparacion: e.target.value })} />
-          </div>
-          <button className="btn btn-primary btn-sm" disabled={guardando} onClick={guardar} style={{ alignSelf: 'flex-start' }}>
-            {guardando ? 'Guardando...' : '💾 Guardar cambios'}
-          </button>
-        </div>
-      )}
-
-      {t.reparacion && !editando && (
+      {t.reparacion && (
         <div style={{ marginTop: 10, fontSize: '0.85rem', color: '#4b5563' }}>
           <strong style={{ color: '#374151' }}>Descripción:</strong> {t.reparacion}
         </div>

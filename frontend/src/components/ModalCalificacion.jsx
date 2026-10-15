@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import api from '../api/client'
-import Estrellas from './Estrellas'
+import Estrellas, { CaraCalificacion, CARAS_CALIFICACION, esCalificacionMala } from './Estrellas'
 import { reproducirCelebracion } from '../context/NotificacionesContext'
 
 const MAX_COMENTARIO = 500
@@ -97,6 +97,31 @@ function FuegosArtificiales({ duracion = DURACION_FUEGOS, onFin }) {
   )
 }
 
+/** Para calificaciones malas: caen caritas tristes en lugar de fuegos artificiales. */
+function LluviaTriste({ duracion = DURACION_FUEGOS, onFin }) {
+  useEffect(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { onFin?.(); return undefined }
+    const t = setTimeout(() => onFin?.(), duracion)
+    return () => clearTimeout(t)
+  }, [duracion, onFin])
+  const gotas = Array.from({ length: 26 }, (_, i) => ({
+    emoji: ['😢', '😞', '💧', '😭', '😔'][i % 5],
+    izq: (i * 37) % 100,
+    retraso: (i % 9) * 0.28,
+    dur: 2.2 + (i % 5) * 0.35,
+    tam: 22 + (i % 4) * 8,
+  }))
+  return (
+    <div aria-hidden="true" style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 9999, overflow: 'hidden' }}>
+      <style>{`@keyframes lluviaCae { 0% { transform: translateY(-10vh) rotate(-8deg); opacity: 0 } 10% { opacity: 1 } 100% { transform: translateY(110vh) rotate(8deg); opacity: 0.2 } }`}</style>
+      {gotas.map((g, i) => (
+        <span key={i} style={{ position: 'absolute', top: 0, left: `${g.izq}%`, fontSize: g.tam,
+          animation: `lluviaCae ${g.dur}s ${g.retraso}s ease-in both` }}>{g.emoji}</span>
+      ))}
+    </div>
+  )
+}
+
 /**
  * Ventana para que el cliente califique un servicio finalizado:
  *  - estrellas al técnico (solo si el servicio tuvo técnico) — obligatorio
@@ -135,7 +160,7 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
         comentario: comentario.trim(),
       })
       setEnviado(true)
-      reproducirCelebracion()
+      if (!esCalificacionMala(calTecnico)) reproducirCelebracion()   // con mala calificación no se "celebra"
     } catch (e) {
       setError(e.response?.data?.error || 'No se pudo enviar tu calificación. Intenta de nuevo.')
     } finally { setEnviando(false) }
@@ -143,12 +168,15 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
 
   return (
     <div className="modal-overlay" style={{ zIndex: 2000 }}>
-      {enviado && fuegos && <FuegosArtificiales onFin={terminarFuegos} />}
+      {enviado && fuegos && (esCalificacionMala(calTecnico)
+        ? <LluviaTriste onFin={terminarFuegos} />
+        : <FuegosArtificiales onFin={terminarFuegos} />)}
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="td-cal-titulo"
            style={{ maxWidth: 480, padding: 0, overflow: 'hidden' }}>
         <div style={{ background: 'linear-gradient(135deg, #111827 0%, #1e3a5f 100%)', color: 'white', padding: '1.25rem 1.5rem' }}>
           <div id="td-cal-titulo" style={{ fontWeight: 700, fontSize: '1.15rem' }}>
-            {enviado ? '🎉 ¡Gracias por tu opinión!' : '⭐ ¿Cómo te fue con tu servicio?'}
+            {!enviado ? '⭐ ¿Cómo te fue con tu servicio?'
+              : esCalificacionMala(calTecnico) ? '😢 Lamentamos tu experiencia' : '🎉 ¡Gracias por tu opinión!'}
           </div>
           <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.85rem', marginTop: 2 }}>
             Servicio {pendiente.ticket_id}
@@ -158,8 +186,12 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
 
         {enviado ? (
           <div style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
-            <div style={{ fontSize: '3rem' }}>✅</div>
-            <p style={{ marginTop: 8, color: '#374151' }}>Tu calificación del técnico nos ayuda a mejorar.</p>
+            <div style={{ fontSize: '3rem' }}>{CARAS_CALIFICACION[calTecnico]?.emoji || '✅'}</div>
+            <p style={{ marginTop: 8, color: '#374151' }}>
+              {esCalificacionMala(calTecnico)
+                ? 'Sentimos que el servicio no fuera lo que esperabas. Tu opinión llega al equipo para corregirlo.'
+                : 'Tu calificación del técnico nos ayuda a mejorar.'}
+            </p>
           </div>
         ) : (
           <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -169,6 +201,9 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
                   👷 Califica al técnico: <span style={{ color: '#1a56db' }}>{pendiente.tecnico_nombre}</span>
                 </div>
                 <Estrellas valor={calTecnico} onChange={setCalTecnico} etiqueta={`Calificación del técnico ${pendiente.tecnico_nombre}`} />
+                <div style={{ minHeight: 48, marginTop: 6 }}>
+                  {calTecnico > 0 && <CaraCalificacion valor={calTecnico} />}
+                </div>
               </div>
             )}
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -178,7 +213,9 @@ export default function ModalCalificacion({ pendiente, onEnviado }) {
               <textarea
                 id="td-cal-comentario" className="form-input" rows={3} style={{ resize: 'none' }}
                 maxLength={MAX_COMENTARIO} value={comentario}
-                placeholder="Cuéntanos qué tal estuvo la atención, el tiempo de respuesta, la reparación…"
+                placeholder={esCalificacionMala(calTecnico)
+                  ? 'Cuéntanos qué salió mal para poder corregirlo…'
+                  : 'Cuéntanos qué tal estuvo la atención, el tiempo de respuesta, la reparación…'}
                 onChange={e => setComentario(e.target.value)}
               />
               <div style={{ textAlign: 'right', fontSize: '0.7rem', color: '#9ca3af' }}>{comentario.length}/{MAX_COMENTARIO}</div>

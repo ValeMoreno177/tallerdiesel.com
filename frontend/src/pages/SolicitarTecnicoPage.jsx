@@ -13,6 +13,7 @@ import iconoMarcador from 'leaflet/dist/images/marker-icon.png'
 import sombraMarcador from 'leaflet/dist/images/marker-shadow.png'
 import ResenasTecnico from '../components/ResenasTecnico'
 import { BotonPildora } from '../components/ui'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 
 const publicApi = axios.create({ baseURL: API_BASE_URL })
 
@@ -97,6 +98,13 @@ export default function SolicitarTecnicoPage() {
   }
 
   useEffect(() => { fetchTecnicos() }, [])
+  // Actualización automática cada 30 s (sin spinner): disponibilidad y calificaciones de los técnicos
+  useAutoRefresh(() => {
+    const q = new URLSearchParams()
+    if (busqueda.ciudad) q.set('ciudad', busqueda.ciudad)
+    if (busqueda.categoria) q.set('categoria', busqueda.categoria)
+    return publicApi.get(`/tecnicos/?${q}`).then(({ data }) => setTecnicos(data.results || data))
+  }, { soloVisible: true, intervalo: 30000 })
 
   const elegirTecnico = (t) => {
     localStorage.setItem('td_tecnico_elegido', JSON.stringify(t))

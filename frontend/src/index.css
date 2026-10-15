@@ -138,12 +138,12 @@ img { max-width: 100%; }
 .col-sticky-1, .col-sticky-2, .col-sticky-3, .col-sticky-4 {
   position: sticky; z-index: 2; box-sizing: border-box;
 }
-.col-sticky-1 { left: 0; width: 134px; min-width: 134px; max-width: 134px; }
-.col-sticky-2 { left: 134px; width: 180px; min-width: 180px; max-width: 180px; }
+.col-sticky-1 { left: 0; width: 158px; min-width: 158px; max-width: 158px; }
+.col-sticky-2 { left: 158px; width: 180px; min-width: 180px; max-width: 180px; }
 td.col-sticky-2 { overflow: hidden; text-overflow: ellipsis; }
 th.col-sticky-2 { overflow: visible; }
-.col-sticky-3 { left: 314px; width: 110px; min-width: 110px; max-width: 110px; }
-.col-sticky-4 { left: 424px; width: 130px; min-width: 130px; max-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.25); }
+.col-sticky-3 { left: 338px; width: 110px; min-width: 110px; max-width: 110px; }
+.col-sticky-4 { left: 448px; width: 130px; min-width: 130px; max-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.25); }
 thead .col-sticky-1, thead .col-sticky-2, thead .col-sticky-3, thead .col-sticky-4 { background: #111; z-index: 3; }
 tbody .col-sticky-1, tbody .col-sticky-2, tbody .col-sticky-3, tbody .col-sticky-4 { background: white; }
 tbody tr:hover .col-sticky-1, tbody tr:hover .col-sticky-2, tbody tr:hover .col-sticky-3, tbody tr:hover .col-sticky-4 { background: #f9fafb; }
@@ -158,6 +158,8 @@ tbody tr:hover .col-sticky-1, tbody tr:hover .col-sticky-2, tbody tr:hover .col-
   padding: 8px; width: 220px; max-height: 260px; overflow-y: auto; z-index: 20;
   text-transform: none; letter-spacing: normal; font-weight: 400; font-size: 0.82rem;
 }
+.th-filtro-flotante { z-index: 3000; }
+.th-filtro-accion { background: none; border: 0; padding: 0; cursor: pointer; color: #9ca3af; font-size: 0.8rem; }
 .th-filtro-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
 .th-filtro-item:hover { background: #f3f4f6; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.875rem; }
@@ -328,12 +330,12 @@ tbody td { padding: 10px 14px; color: #374151; white-space: nowrap; }
     max-width: none !important;
   }
   .col-sticky-1 {
-    width: 112px !important;
-    min-width: 112px !important;
-    max-width: 112px !important;
+    width: 134px !important;
+    min-width: 134px !important;
+    max-width: 134px !important;
   }
   .col-sticky-2 {
-    left: 112px !important;
+    left: 134px !important;
     width: 140px !important;
     min-width: 140px !important;
     max-width: 140px !important;

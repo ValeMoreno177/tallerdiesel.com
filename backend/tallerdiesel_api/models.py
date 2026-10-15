@@ -214,6 +214,12 @@ class Ticket(models.Model):
         choices=[('coordinador','Coordinador'),('tecnico','Técnico')],
         default='coordinador'
     )  # Admin otorga permiso de edición al coordinador para este ticket
+    # Ubicación del cliente compartida EN TIEMPO REAL mientras el servicio está abierto
+    ubicacion_lat         = models.FloatField(null=True, blank=True)
+    ubicacion_lng         = models.FloatField(null=True, blank=True)
+    ubicacion_precision   = models.FloatField(null=True, blank=True)   # metros
+    ubicacion_actualizada = models.DateTimeField(null=True, blank=True)
+    ubicacion_compartiendo = models.BooleanField(default=False)
     fecha_creacion      = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
     # Momento en que el servicio pasó a "Finalizado" (se usa para pedir la calificación al cliente).

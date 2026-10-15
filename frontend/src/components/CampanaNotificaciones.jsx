@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import { useNotificaciones, activarSonido } from '../context/NotificacionesContext'
 import { pedirCalificacion } from './CalificacionGlobal'
 import api from '../api/client'
+import { createPortal } from 'react-dom'
+import ChatTicketModal from './ChatTicketModal'
 
 // Las notificaciones se consultan periódicamente desde NotificacionesProvider (una sola vez para toda
 // la app, con sonido y aviso flotante). Esta campana solo las muestra.
@@ -15,6 +17,9 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
   const navigate     = useNavigate()
   const { user }     = useAuth()
   const lista = vista === 'papelera' ? archivadas : notifs
+  // Si la pantalla no trae su propio chat, la campana lo abre aquí mismo
+  const [chatPropio, setChatPropio] = useState(null)
+  const esDeChat = n => n.referencia_id && (n.tipo === 'comentario' || n.tipo === 'alerta_respuesta_sla')
 
   useEffect(() => {
     if (abierto && vista === 'papelera') cargarArchivadas()
@@ -41,9 +46,11 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
       pedirCalificacion(n.referencia_id)
       return
     }
-    if (n.tipo === 'comentario' && n.referencia_id && onAbrirChat) {
-      setAbierto(false)
-      onAbrirChat({ id: n.referencia_id })
+    // Mensajes del chat (y el aviso de "respuesta pendiente"): se abre DIRECTO el chat del servicio
+    if (esDeChat(n)) {
+      marcarLeida(n.id).catch(() => {})
+      if (onAbrirChat) onAbrirChat({ id: n.referencia_id })
+      else setChatPropio({ id: n.referencia_id })
       return
     }
     await marcarLeida(n.id)
@@ -76,6 +83,9 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
     if (tipo === 'solicitud')        return '🔧'
     if (tipo === 'tecnico_asignado') return '👷'
     if (tipo === 'comentario')       return '💬'
+    if (tipo === 'alerta_respuesta_sla') return '⏰'
+    if (tipo === 'finalizacion_solicitada') return '🏁'
+    if (tipo === 'ubicacion') return '📍'
     if (tipo === 'calificar_servicio') return '⭐'
     return '📋'
   }
@@ -191,11 +201,15 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
                       <button
                         onClick={() => handleRellenar(n)}
                         style={{
-                          marginTop: 6, background: '#111', color: 'white',
+                          marginTop: 6, background: esDeChat(n) ? 'var(--naranja)' : '#111', color: 'white',
                           border: 'none', borderRadius: 20, padding: '4px 14px',
                           fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600,
                         }}>
-                        {n.tipo === 'calificar_servicio' ? '⭐ Calificar' : '📋 Rellenar'}
+                        {n.tipo === 'calificar_servicio' ? '⭐ Calificar'
+                          : esDeChat(n) ? '💬 Abrir chat'
+                          : n.tipo === 'finalizacion_solicitada' ? '🏁 Responder'
+                          : n.tipo === 'ubicacion' ? '📍 Ver ubicación'
+                          : user?.rol === 'cliente' ? '👁 Ver servicio' : '📋 Rellenar'}
                       </button>
                     )}
                   </div>
@@ -223,6 +237,10 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
           100% { transform: rotate(0deg); }
         }
       `}</style>
+      {chatPropio && createPortal(
+        <ChatTicketModal ticket={chatPropio} onClose={() => setChatPropio(null)} />,
+        document.body,
+      )}
     </div>
   )
 }

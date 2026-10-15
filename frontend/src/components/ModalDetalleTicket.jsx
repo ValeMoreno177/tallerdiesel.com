@@ -5,6 +5,7 @@ import MapaReasignarTecnicoModal from './MapaReasignarTecnicoModal'
 import ResumenCalificacion from './ResumenCalificacion'
 import { pedirCalificacion } from './CalificacionGlobal'
 import useAutoRefresh from '../hooks/useAutoRefresh'
+import { MapaUbicacionCliente } from './UbicacionEnVivo'
 
 export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLectura = false }) {
   const { user } = useAuth()
@@ -255,6 +256,9 @@ export default function ModalDetalleTicket({ ticket, onClose, onUpdated, soloLec
               </button>
             </div>
           )}
+
+          {/* Ubicación del cliente en tiempo real (solo personal del taller) */}
+          {esStaff && <MapaUbicacionCliente ticket={localTicket} />}
 
           {/* Descripción */}
           {localTicket.reparacion && (

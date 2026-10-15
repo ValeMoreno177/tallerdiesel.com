@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import api from '../api/client'
+import { useAuth } from '../context/AuthContext'
+import { CARAS_CALIFICACION } from './Estrellas'
 
 // Calificaciones y reseñas de un técnico, al estilo de Play Store:
 //   - Resumen: promedio grande, estrellas, total de reseñas y barras de 5★ a 1★.
@@ -96,7 +99,64 @@ function Resumen({ promedio, total, conteo, onFiltrar, filtro }) {
   )
 }
 
-function Resena({ op }) {
+// Respuesta del taller a una reseña. Admin y Coordinador pueden escribirla, cambiarla o borrarla.
+function RespuestaTaller({ op, permitirResponder }) {
+  const { user } = useAuth()
+  const esStaff = permitirResponder && ['admin', 'coordinador'].includes(user?.rol)
+  const [respuesta, setRespuesta] = useState(op.respuesta || '')
+  const [fechaResp, setFechaResp] = useState(op.respuesta_fecha || null)
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState(op.respuesta || '')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const guardar = async () => {
+    setGuardando(true); setError('')
+    try {
+      const { data } = await api.post('/tecnicos/responder_resena/', { opinion_id: op.id, respuesta: texto })
+      setRespuesta(data.respuesta || ''); setFechaResp(data.respuesta_fecha || null); setEditando(false)
+    } catch (e) { setError(e?.response?.data?.error || 'No se pudo guardar la respuesta.') }
+    finally { setGuardando(false) }
+  }
+
+  if (editando) {
+    return (
+      <div style={{ marginTop: 8 }}>
+        <textarea value={texto} onChange={e => setTexto(e.target.value)} rows={3} maxLength={1000}
+          placeholder="Escribe una respuesta amable para el cliente…" aria-label="Respuesta a la reseña"
+          style={{ width: '100%', boxSizing: 'border-box', borderRadius: 10, border: '1px solid #d1d5db', padding: '8px 10px', font: 'inherit', fontSize: '0.8rem' }} />
+        {error && <div style={{ color: '#b91c1c', fontSize: '0.72rem' }}>{error}</div>}
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setEditando(false); setTexto(respuesta) }}>Cancelar</button>
+          <button type="button" className="btn btn-sm btn-primary" disabled={guardando} onClick={guardar}>
+            {guardando ? 'Guardando…' : texto.trim() ? 'Publicar respuesta' : 'Borrar respuesta'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {respuesta && (
+        <div style={{ marginTop: 8, marginLeft: 12, padding: '8px 10px', background: '#fff7ed', borderLeft: `3px solid ${NARANJA}`, borderRadius: 8 }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9a3412' }}>
+            Respuesta de TallerDiesel <span style={{ fontWeight: 400, color: '#9ca3af' }}>· {fecha(fechaResp)}</span>
+          </div>
+          <p style={{ margin: '3px 0 0', fontSize: '0.78rem', color: '#374151', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{respuesta}</p>
+        </div>
+      )}
+      {esStaff && (
+        <button type="button" onClick={() => { setTexto(respuesta); setEditando(true) }}
+          style={{ marginTop: 6, background: 'none', border: 0, padding: 0, color: NARANJA, fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+          {respuesta ? '✏️ Editar respuesta' : '💬 Responder'}
+        </button>
+      )}
+    </>
+  )
+}
+
+function Resena({ op, permitirResponder = false }) {
   const [abierta, setAbierta] = useState(false)
   const texto = (op.comentario || '').trim()
   const largo = texto.length > 140
@@ -112,6 +172,11 @@ function Resena({ op }) {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '5px 0 3px' }}>
         <Estrellitas valor={estrellasDe(op)} tamano={12} />
+        {CARAS_CALIFICACION[Math.round(estrellasDe(op))] && (
+          <span title={CARAS_CALIFICACION[Math.round(estrellasDe(op))].texto} style={{ fontSize: 14 }}>
+            {CARAS_CALIFICACION[Math.round(estrellasDe(op))].emoji}
+          </span>
+        )}
         <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>{fecha(op.fecha)}</span>
       </div>
       {texto ? (
@@ -127,6 +192,7 @@ function Resena({ op }) {
       ) : (
         <p style={{ margin: 0, fontSize: '0.75rem', color: '#9ca3af', fontStyle: 'italic' }}>Sin comentario</p>
       )}
+      <RespuestaTaller op={op} permitirResponder={permitirResponder} />
     </article>
   )
 }
@@ -194,7 +260,7 @@ function VentanaResenas({ tecnico, ops, promedio, conteo, onClose }) {
               No hay reseñas con {filtro} {filtro === 1 ? 'estrella' : 'estrellas'}.
             </p>
           )}
-          {lista.map(op => <Resena key={op.id} op={op} />)}
+          {lista.map(op => <Resena key={op.id} op={op} permitirResponder />)}
         </div>
       </section>
     </div>,

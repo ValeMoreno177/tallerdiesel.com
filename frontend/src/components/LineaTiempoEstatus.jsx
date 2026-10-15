@@ -59,7 +59,7 @@ export default function LineaTiempoEstatus({ estatus, compacto = false }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {PASOS.map((p, i) => (
             <div key={p} title={ETIQUETAS[p]}
-                 style={{ flex: 1, height: 4, borderRadius: 2, background: i <= indice ? '#1a56db' : '#e5e7eb' }} />
+                 style={{ flex: 1, height: 4, borderRadius: 2, background: i <= indice ? 'var(--naranja)' : '#e5e7eb' }} />
           ))}
         </div>
         <div style={{ position: 'absolute', bottom: 3, left: izquierda, marginLeft: -11, pointerEvents: 'none',
@@ -75,7 +75,7 @@ export default function LineaTiempoEstatus({ estatus, compacto = false }) {
     <div style={{ position: 'relative', margin: '2.6rem 40px 2.8rem', height: 26 }}>
       <style>{ESTILOS}</style>
       <div style={{ position: 'absolute', top: 11, left: 0, right: 0, height: 3, background: '#e5e7eb', borderRadius: 2 }} />
-      <div style={{ position: 'absolute', top: 11, left: 0, width: `${porcentaje}%`, height: 3, background: '#1a56db',
+      <div style={{ position: 'absolute', top: 11, left: 0, width: `${porcentaje}%`, height: 3, background: 'var(--naranja)',
                     borderRadius: 2, transition: `width ${MS_VIAJE}ms ease-in-out` }} />
       {PASOS.map((paso, i) => (
         <div key={paso} style={{ position: 'absolute', left: `${(i / (n - 1)) * 100}%`, top: 0, transform: 'translateX(-50%)',
@@ -83,7 +83,7 @@ export default function LineaTiempoEstatus({ estatus, compacto = false }) {
           <div style={{
             width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '0.7rem', fontWeight: 700, transition: `background ${MS_VIAJE}ms, color ${MS_VIAJE}ms`,
-            background: i <= indice ? '#1a56db' : '#e5e7eb', color: i <= indice ? 'white' : '#9ca3af',
+            background: i <= indice ? 'var(--naranja)' : '#e5e7eb', color: i <= indice ? 'white' : '#9ca3af',
           }}>
             {i < indice ? '✓' : i + 1}
           </div>

@@ -179,6 +179,7 @@ class EvidenciaTicketSerializer(serializers.ModelSerializer):
 
 class TicketSerializer(serializers.ModelSerializer):
     coordinador_nombre  = serializers.SerializerMethodField()
+    cliente_nombre      = serializers.SerializerMethodField()
     operador_nombre    = serializers.SerializerMethodField()
     tecnico_nombre       = serializers.SerializerMethodField()
     eliminado_por_nombre = serializers.SerializerMethodField()
@@ -207,6 +208,9 @@ class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = '__all__'
+
+    def get_cliente_nombre(self, obj):
+        return obj.cliente.nombre_completo if obj.cliente_id else None
 
     def get_coordinador_nombre(self, obj):
         return obj.coordinador.nombre_completo if obj.coordinador else None
@@ -262,10 +266,31 @@ class UnidadFlotillaSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'creado_en', 'propietario']
 
 
+def nombre_corto(nombre):
+    """'Juan Pérez López' → 'Juan P.' (para mostrar reseñas sin exponer el nombre completo)."""
+    partes = (nombre or '').split()
+    if not partes:
+        return 'Cliente'
+    return f'{partes[0]} {partes[1][0].upper()}.' if len(partes) > 1 else partes[0]
+
+
 class OpinionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Opinion
         fields = '__all__'
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        # El listado de técnicos es público: solo Admin y Coordinador ven el nombre completo de quien opinó
+        # y a qué servicio pertenece la reseña.
+        usuario = getattr(self.context.get('request'), 'user', None)
+        if getattr(usuario, 'rol', None) not in ('admin', 'coordinador'):
+            data['nombre_autor'] = nombre_corto(obj.nombre_autor)
+            data.pop('ticket', None)
+            data.pop('respondido_por', None)
+        else:
+            data['respondido_por_nombre'] = obj.respondido_por.nombre_completo if obj.respondido_por_id else None
+        return data
 
 
 class TecnicoSerializer(serializers.ModelSerializer):

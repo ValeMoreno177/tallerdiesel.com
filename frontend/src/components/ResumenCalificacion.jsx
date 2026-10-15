@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import Estrellas from './Estrellas'
+import Estrellas, { CARAS_CALIFICACION, esCalificacionMala } from './Estrellas'
 
 const COLORES = ['#f59e0b', '#ef4444', '#3b82f6', '#10b981', '#a855f7', '#ec4899', '#fde047']
 
@@ -114,11 +114,11 @@ export default function ResumenCalificacion({
   if (!detalle) return null
   return (
     <>
-      {celebrar && fuegos && <FuegosArtificiales onFin={terminarFuegos} />}
+      {celebrar && fuegos && !esCalificacionMala(detalle?.calificacion_tecnico) && <FuegosArtificiales onFin={terminarFuegos} />}
       <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', fontSize: '0.85rem', color: '#78350f' }}>
         {celebrar && (
           <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 8 }}>
-            🎉 ¡Gracias por tu calificación!
+            {esCalificacionMala(detalle.calificacion_tecnico) ? '😢 Lamentamos tu experiencia' : '🎉 ¡Gracias por tu calificación!'}
           </div>
         )}
         <div style={{ fontWeight: 700, marginBottom: 6 }}>⭐ {titulo}</div>
@@ -126,7 +126,14 @@ export default function ResumenCalificacion({
           {detalle.calificacion_tecnico != null && (
             <div>
               <div style={{ fontSize: '0.75rem', color: '#92400e' }}>Técnico{tecnicoNombre ? `: ${tecnicoNombre}` : ''}</div>
-              <Estrellas valor={detalle.calificacion_tecnico} soloLectura tamano={20} etiqueta="Calificación del técnico" />
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <Estrellas valor={detalle.calificacion_tecnico} soloLectura tamano={20} etiqueta="Calificación del técnico" />
+                {CARAS_CALIFICACION[detalle.calificacion_tecnico] && (
+                  <span title={CARAS_CALIFICACION[detalle.calificacion_tecnico].texto} style={{ fontSize: 20 }}>
+                    {CARAS_CALIFICACION[detalle.calificacion_tecnico].emoji}
+                  </span>
+                )}
+              </span>
             </div>
           )}
         </div>

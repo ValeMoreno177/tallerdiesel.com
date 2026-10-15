@@ -219,8 +219,8 @@ DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', f'TallerDiesel <{EMAIL
 EMAIL_EMPRESA = os.environ.get('EMAIL_EMPRESA', 'coordinador@tallerdiesel.com')
 
 # Los tickets solo los edita el coordinador asignado; los demás roles los ven en modo lectura.
-# Pon ADMIN_PUEDE_EDITAR_TICKETS=true para que el Administrador también pueda editarlos.
-ADMIN_PUEDE_EDITAR_TICKETS = os.environ.get('ADMIN_PUEDE_EDITAR_TICKETS', 'false').strip().lower() in ('1', 'true', 'yes', 'si', 'sí')
+# El Administrador puede editar TODOS los tickets (pon ADMIN_PUEDE_EDITAR_TICKETS=false para dejarlo en solo lectura).
+ADMIN_PUEDE_EDITAR_TICKETS = os.environ.get('ADMIN_PUEDE_EDITAR_TICKETS', 'true').strip().lower() in ('1', 'true', 'yes', 'si', 'sí')
 
 
 # ── Monitoreo de errores (Sentry) ─────────────────────────────────────────────

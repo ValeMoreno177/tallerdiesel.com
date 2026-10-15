@@ -255,8 +255,8 @@ class PuedeEditarTicket(BasePermission):
     lectura; el Administrador conserva las acciones de administración (asignar coordinador, permitir edición
     de un ticket cerrado, papelera). Si un ticket aún no tiene coordinador, el primer coordinador que lo
     atiende se queda con él.
-    El Cliente nunca crea tickets manualmente (se generan al solicitar un servicio), pero sí puede editar
-    unidad/tipo de unidad/descripción de su propio ticket y comentarlo, mientras no esté finalizado."""
+    El Cliente nunca crea ni edita tickets (se generan al solicitar un servicio); sí puede comentarlos,
+    elegir técnico en su servicio directo, confirmar la finalización y calificar."""
 
     # Acciones de EDICIÓN: requieren ser el coordinador asignado (o tomar el ticket si está libre)
     ACCIONES_EDICION = ('update', 'partial_update', 'destroy', 'asignar_tecnico', 'solicitar_finalizacion', 'subir_evidencia')
@@ -300,7 +300,11 @@ class PuedeEditarTicket(BasePermission):
             return True  # los comentarios nunca se bloquean, ni con el servicio finalizado
         if view.action == 'marcar_mensajes_leidos':
             return True
-        if view.action in ('update', 'partial_update', 'asignar_tecnico', 'responder_finalizacion'):
+        if view.action == 'ubicacion':
+            return True   # la vista revisa que el servicio siga abierto
+        if view.action in ('update', 'partial_update'):
+            return False   # el cliente no edita el ticket (el lápiz es solo de Administrador y Coordinador)
+        if view.action in ('asignar_tecnico', 'responder_finalizacion'):
             return obj.estatus != 'terminado'
         if view.action == 'calificar':
             return obj.estatus == 'terminado'
@@ -617,7 +621,8 @@ def tour_completado_view(request):
 # ── Usuarios ──────────────────────────────────────────────────────────────────
 
 class UsuarioViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all().order_by('-fecha_registro')
+    # Activos primero; los inactivos se van hasta abajo
+    queryset = User.objects.all().order_by('-is_active', '-fecha_registro')
     serializer_class = UsuarioSerializer
     permission_classes = [EsAdminOPermisoEdicion]
 
@@ -690,6 +695,14 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             qs = User.objects.filter(rol='coordinador', is_active=True)
         return Response(UsuarioSerializer(qs, many=True).data)
 
+    @action(detail=False, methods=['get'])
+    def clientes(self, request):
+        """Lista corta de clientes (id, nombre, empresa) para elegir el cliente de un ticket."""
+        if request.user.rol not in ('admin', 'coordinador'):
+            return Response({'error': 'No tienes permiso.'}, status=403)
+        qs = User.objects.filter(rol='cliente', is_active=True).order_by('empresa', 'nombre')
+        return Response([{'id': u.id, 'nombre_completo': u.nombre_completo, 'empresa': u.empresa or ''} for u in qs])
+
 
 # ── Tickets ───────────────────────────────────────────────────────────────────
 
@@ -718,6 +731,8 @@ def al_finalizar(ticket):
     coordinador recibe automáticamente el siguiente ticket en espera."""
     solicitar_calificacion(ticket)
     asignar_siguiente_en_espera(ticket.coordinador)
+    # Al terminar el servicio se deja de compartir la ubicación del cliente
+    Ticket.objects.filter(pk=ticket.pk).update(ubicacion_compartiendo=False)
 
 
 class TicketViewSet(viewsets.ModelViewSet):
@@ -728,7 +743,7 @@ class TicketViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         from django.db.models import Q
         qs = _con_mensajes_no_leidos(
-            super().get_queryset().prefetch_related('opinion'),
+            super().get_queryset().select_related('cliente', 'coordinador', 'tecnico').prefetch_related('opinion'),
             self.request.user,
         )
         # Por default no se muestran los tickets en la papelera, salvo que se pida explícitamente
@@ -743,7 +758,21 @@ class TicketViewSet(viewsets.ModelViewSet):
         # El coordinador ve TODOS los tickets (los de otros coordinadores en modo lectura); solo edita los suyos.
         estatus = self.request.query_params.get('estatus')
         if estatus:
-            qs = qs.filter(estatus=estatus)
+            qs = qs.filter(estatus__in=[e for e in estatus.split(',') if e])
+        # Filtro de empresa de la Bitácora (varias separadas por coma)
+        empresas = [e for e in (self.request.query_params.get('empresas') or '').split(',') if e]
+        if empresas:
+            qs = qs.filter(empresa__in=empresas)
+        # Rango de fechas del servicio (AAAA-MM-DD), para el filtro de la Bitácora
+        desde = self.request.query_params.get('fecha_desde')
+        hasta = self.request.query_params.get('fecha_hasta')
+        try:
+            if desde:
+                qs = qs.filter(fecha__gte=date.fromisoformat(desde))
+            if hasta:
+                qs = qs.filter(fecha__lte=date.fromisoformat(hasta))
+        except ValueError:
+            pass   # fecha mal escrita: se ignora el filtro
         return qs
 
     def perform_destroy(self, instance):
@@ -763,6 +792,67 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No tienes permiso para ver la papelera.'}, status=403)
         qs = Ticket.objects.filter(eliminado=True).order_by('-eliminado_en')
         return Response(TicketSerializer(qs, many=True, context={'request': request}).data)
+
+    def _filtrar_como_bitacora(self, request, qs):
+        """Aplica los mismos filtros que se ven en la Bitácora (tipo, empresas, búsqueda).
+        Estatus y fechas ya los aplica get_queryset con los parámetros de la URL."""
+        tipo = request.query_params.get('tipo')
+        if tipo and tipo not in ('todos', 'papelera'):
+            qs = qs.filter(tipo_solicitud=tipo)
+        empresas = [e for e in (request.query_params.get('empresas') or '').split(',') if e]
+        if empresas:
+            qs = qs.filter(empresa__in=empresas)
+        busqueda = (request.query_params.get('busqueda') or '').strip()
+        if busqueda:
+            qs = qs.filter(Q(ticket_id__icontains=busqueda) | Q(empresa__icontains=busqueda) | Q(unidad__icontains=busqueda))
+        return qs
+
+    @action(detail=False, methods=['post'])
+    def mandar_a_papelera(self, request):
+        """Manda VARIOS tickets a la papelera de una vez.
+        - {"ids": [1, 2, 3]}  → esos tickets
+        - {"todos": true}     → todos los que coinciden con los filtros de la Bitácora (parámetros de la URL)
+        El Administrador puede con cualquiera; el Coordinador solo con los tickets que tiene asignados."""
+        if request.user.rol not in ('admin', 'coordinador'):
+            return Response({'error': 'No tienes permiso.'}, status=403)
+        from django.utils import timezone as tz
+        qs = self.get_queryset()        # ya excluye los que están en la papelera
+        if request.data.get('todos') in (True, 'true', 1, '1'):
+            qs = self._filtrar_como_bitacora(request, qs)
+        else:
+            ids = [i for i in (request.data.get('ids') or []) if str(i).isdigit()]
+            if not ids:
+                return Response({'error': 'No seleccionaste tickets.'}, status=400)
+            qs = qs.filter(pk__in=ids)
+        if request.user.rol == 'coordinador':
+            qs = qs.filter(coordinador=request.user)
+        movidos = Ticket.objects.filter(pk__in=list(qs.values_list('pk', flat=True))).update(
+            eliminado=True, eliminado_en=tz.now(), eliminado_por=request.user,
+        )
+        return Response({'movidos': movidos})
+
+    @action(detail=False, methods=['post'])
+    def restaurar_todos(self, request):
+        """Regresa de la papelera varios tickets ({"ids": [...]}) o todos ({"todos": true})."""
+        if request.user.rol not in ('admin', 'coordinador'):
+            return Response({'error': 'No tienes permiso.'}, status=403)
+        qs = Ticket.objects.filter(eliminado=True)
+        if request.data.get('todos') not in (True, 'true', 1, '1'):
+            ids = [i for i in (request.data.get('ids') or []) if str(i).isdigit()]
+            qs = qs.filter(pk__in=ids)
+        if request.user.rol == 'coordinador':
+            qs = qs.filter(coordinador=request.user)
+        restaurados = 0
+        for ticket in qs.order_by('eliminado_en'):
+            # Igual que al restaurar uno: si su folio ya se reutilizó, se le agrega un sufijo
+            if ticket.ticket_id and Ticket.objects.filter(ticket_id=ticket.ticket_id, eliminado=False).exclude(pk=ticket.pk).exists():
+                ticket.ticket_id = f'{ticket.ticket_id}-R'
+            ticket.eliminado = False
+            ticket.eliminado_en = None
+            ticket.eliminado_por = None
+            ticket.save()
+            restaurados += 1
+        return Response({'restaurados': restaurados})
 
     @action(detail=True, methods=['post'])
     def restaurar(self, request, pk=None):
@@ -797,18 +887,9 @@ class TicketViewSet(viewsets.ModelViewSet):
                 return Response({'error': 'Otro coordinador ya tomó este ticket.'}, status=409)
             ticket = self.get_object()
 
-        # El cliente solo puede modificar unidad, tipo de unidad y descripción
+        # Editar el ticket es solo para Administrador y Coordinador
         if request.user.rol == 'cliente':
-            campos_permitidos = {'unidad', 'tipo_unidad', 'reparacion'}
-            data = request.data
-            if hasattr(data, 'dict'):
-                data = data.dict()
-            campos_no_permitidos = set(data.keys()) - campos_permitidos
-            if campos_no_permitidos:
-                return Response(
-                    {'error': f'Solo puedes editar unidad, tipo de unidad y descripción. Campos no permitidos: {", ".join(campos_no_permitidos)}.'},
-                    status=403)
-            kwargs['partial'] = True
+            return Response({'error': 'Solo el Administrador o el Coordinador pueden editar el ticket.'}, status=403)
 
         # Servicio DIRECTO CON TÉCNICO: el cliente trató con el técnico, así que el Coordinador no lo
         # cierra por su cuenta: lo solicita y el Cliente confirma. En un servicio CON COORDINADOR, el
@@ -1135,6 +1216,45 @@ class TicketViewSet(viewsets.ModelViewSet):
                 leido_en__isnull=True, es_cambio_estatus=False,
             ).update(leido_en=timezone.now())
         return Response({'marcados': actualizados})
+
+    @action(detail=True, methods=['post'])
+    def ubicacion(self, request, pk=None):
+        """El cliente comparte su ubicación EN TIEMPO REAL (el navegador la manda cada pocos segundos).
+        Con {"detener": true} deja de compartirla. Solo mientras el servicio no esté finalizado."""
+        ticket = self.get_object()
+        if request.user.rol != 'cliente' or ticket.cliente_id != request.user.id:
+            return Response({'error': 'Solo el cliente del servicio comparte su ubicación.'}, status=403)
+        if request.data.get('detener') in (True, 'true', '1', 1):
+            ticket.ubicacion_compartiendo = False
+            ticket.save(update_fields=['ubicacion_compartiendo'])
+            return Response({'compartiendo': False})
+        if ticket.estatus == 'terminado':
+            return Response({'error': 'El servicio ya está finalizado.'}, status=400)
+        try:
+            lat = float(request.data.get('lat'))
+            lng = float(request.data.get('lng'))
+        except (TypeError, ValueError):
+            return Response({'error': 'Ubicación no válida.'}, status=400)
+        if not coordenada_valida(lat, lng):
+            return Response({'error': 'Ubicación fuera de rango.'}, status=400)
+        try:
+            precision = float(request.data.get('precision')) if request.data.get('precision') is not None else None
+        except (TypeError, ValueError):
+            precision = None
+        primera_vez = not ticket.ubicacion_compartiendo
+        ticket.ubicacion_lat, ticket.ubicacion_lng, ticket.ubicacion_precision = lat, lng, precision
+        ticket.ubicacion_actualizada = timezone.now()
+        ticket.ubicacion_compartiendo = True
+        ticket.save(update_fields=['ubicacion_lat', 'ubicacion_lng', 'ubicacion_precision',
+                                   'ubicacion_actualizada', 'ubicacion_compartiendo'])
+        if primera_vez and ticket.coordinador_id:
+            Notificacion.objects.create(
+                destinatario=ticket.coordinador,
+                titulo=f'📍 {request.user.nombre_completo} comparte su ubicación en tiempo real',
+                mensaje=f'Puedes verla en el detalle del ticket {ticket.etiqueta}.',
+                tipo='ubicacion', referencia_id=ticket.id,
+            )
+        return Response({'compartiendo': True, 'actualizada': ticket.ubicacion_actualizada})
 
     @action(detail=True, methods=['post'])
     def escribiendo(self, request, pk=None):
@@ -1575,13 +1695,10 @@ class TicketViewSet(viewsets.ModelViewSet):
         from openpyxl.styles import Font, PatternFill
 
         qs = self.get_queryset()
-        estatus = request.query_params.get('estatus')
         tipo = request.query_params.get('tipo')
         busqueda = (request.query_params.get('busqueda') or '').lower()
         empresas_param = request.query_params.get('empresas')  # separadas por coma
 
-        if estatus:
-            qs = qs.filter(estatus=estatus)
         if tipo and tipo != 'todos':
             qs = qs.filter(tipo_solicitud=tipo)
         if empresas_param:
@@ -1875,6 +1992,11 @@ def solicitud_servicio(request):
             tipo_solicitud=tipo_sol,
             tecnico=tecnico_obj,
         )
+        # Solicitud DIRECTA A TÉCNICO: no espera a que un coordinador la tome, así que recibe su folio
+        # TD consecutivo desde que se crea (antes se quedaba como "Solicitud #n").
+        if tipo_sol == 'tecnico' or coordinador_auto:
+            ticket.asignar_folio()
+            ticket.refresh_from_db()
         solicitud.ticket = ticket
         solicitud.save(update_fields=['ticket'])
         ComentarioTicket.objects.create(
@@ -2059,6 +2181,9 @@ def revisar_alertas_sla():
         ticket.save(update_fields=['alerta_respuesta_sla_enviada'])
 
 
+TIPOS_OCULTOS_CLIENTE = ('cambio_estatus', 'tecnico_asignado', 'coordinador_asignado', 'ticket_asignado')
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def mis_notificaciones(request):
@@ -2069,9 +2194,13 @@ def mis_notificaciones(request):
     if request.user.rol in ('admin', 'coordinador') and cache.add('sla_revisado', True, timeout=1):
         revisar_alertas_sla()
     archivadas = request.query_params.get('archivadas') == 'true'
-    notifs = Notificacion.objects.filter(
-        destinatario=request.user, archivada=archivadas,
-    ).order_by('-fecha', '-id')[:200]
+    notifs = Notificacion.objects.filter(destinatario=request.user, archivada=archivadas)
+    if request.user.rol == 'cliente':
+        # El cliente solo ve lo que le pide algo (calificar al técnico, confirmar la finalización)
+        # y los mensajes del chat. Los avisos de cambios de estatus y de técnico/coordinador asignado
+        # ya los ve en la línea del tiempo de su servicio.
+        notifs = notifs.exclude(tipo__in=TIPOS_OCULTOS_CLIENTE)
+    notifs = notifs.order_by('-fecha', '-id')[:200]
     return Response(NotificacionSerializer(notifs, many=True).data)
 
 

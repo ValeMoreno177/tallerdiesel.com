@@ -77,25 +77,29 @@ export default function DashboardCliente() {
               <tr>
                 <th>Ticket</th><th>Unidad</th><th>Lugar</th><th>Fecha</th><th>Estatus</th>
                 <th>Chat</th><th>Atendido por</th>
-                <th>Total</th><th>Ver</th>
+                <th>Total</th>
               </tr>
             </thead>
             <tbody>
               {!tickets.length && (
-                <tr><td colSpan={9} style={{ textAlign: 'center', color: '#9ca3af', padding: '1.5rem' }}>
+                <tr><td colSpan={8} style={{ textAlign: 'center', color: '#9ca3af', padding: '1.5rem' }}>
                   No hay servicios aún
                 </td></tr>
               )}
               {tickets.map(t => (
                 <tr key={t.id}>
-                  <td className="td-link">{t.etiqueta || t.ticket_id}</td>
+                  <td>
+                    <span className="td-link" role="button" tabIndex={0} title="Ver detalle"
+                      onClick={() => setTicketSeleccionado(t)}
+                      onKeyDown={e => e.key === 'Enter' && setTicketSeleccionado(t)}>{t.etiqueta || t.ticket_id}</span>
+                  </td>
                   <td>{t.unidad}</td>
                   <td>{t.lugar || '—'}</td>
                   <td>{t.fecha}</td>
                   <td>
                     <div>
                       <span className={`badge badge-${t.estatus}`}>{t.estatus_display || t.estatus}</span>
-                      {(t.tipo_solicitud !== 'tecnico' || t.coordinador_nombre) && (
+                      {t.tipo_solicitud !== 'tecnico' && (
                         <MiniBarra estatus={t.estatus} />
                       )}
                     </div>
@@ -109,9 +113,6 @@ export default function DashboardCliente() {
                   </td>
                   <td style={{ fontWeight: 600 }}>
                     ${parseFloat(t.total || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                  </td>
-                  <td>
-                    <button className="btn btn-sm btn-ghost" onClick={() => setTicketSeleccionado(t)}>👁 Ver</button>
                   </td>
                 </tr>
               ))}
@@ -129,7 +130,7 @@ export default function DashboardCliente() {
       <main className="main-content">
         <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 className="page-title">Hola, {user?.nombre || user?.username} 👋</h1>
+            <h1 className="page-title">Hola, {user?.nombre || user?.username}</h1>
             <p className="page-subtitle">{user?.empresa} — {user?.puesto || 'Cliente'}</p>
             <CamionTitulo />
           </div>

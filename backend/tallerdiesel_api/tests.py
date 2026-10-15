@@ -41,13 +41,13 @@ class CalificacionServicioTests(APITestCase):
         self.assertEqual([t['id'] for t in r.data], [self.ticket.id])
         self.assertEqual(r.data[0]['tecnico_nombre'], 'Juan')
 
-    def test_el_admin_ya_no_edita_tickets_asi_que_no_los_finaliza(self):
-        # Solo el coordinador asignado edita; el admin solo lee. (Con cliente, el coordinador tampoco cierra solo.)
+    def test_el_admin_edita_todos_los_tickets(self):
+        # El Administrador puede editar cualquier ticket (también finalizarlo)
         self.client.force_authenticate(self.admin)
         r = self.client.patch(f'/api/tickets/{self.ticket.id}/', {'estatus': 'terminado'}, format='json')
-        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.status_code, 200, r.data)
         self.ticket.refresh_from_db()
-        self.assertEqual(self.ticket.estatus, 'proceso')
+        self.assertEqual(self.ticket.estatus, 'terminado')
 
     def test_calificar_ok_y_no_se_repite(self):
         self._finalizar_con_cliente()
@@ -686,12 +686,12 @@ class EdicionSoloCoordinadorAsignadoTests(BaseTickets):
         self.t.refresh_from_db()
         self.assertEqual((self.t.reparacion, self.t.coordinador), ('', self.carlo))
 
-    def test_el_admin_es_solo_lectura_pero_conserva_la_administracion(self):
+    def test_el_admin_edita_todo_y_conserva_la_administracion(self):
         c = self._con(self.admin)
         d = c.get(f'/api/tickets/{self.t.id}/')
-        self.assertFalse(d.data['puede_editar'])
-        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'x'}, format='json').status_code, 403)
-        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json').status_code, 403)
+        self.assertTrue(d.data['puede_editar'])
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'reparacion': 'x'}, format='json').status_code, 200)
+        self.assertEqual(c.post(f'/api/tickets/{self.t.id}/asignar_tecnico/', {'tecnico_id': self.tec1.id}, format='json').status_code, 200)
         # administración: reasignar coordinador, permitir edición de un ticket cerrado, papelera
         r = c.post(f'/api/tickets/{self.t.id}/tomar_como_coordinador/', {'coordinador_id': self.karen.id}, format='json')
         self.assertEqual(r.status_code, 200)
@@ -708,7 +708,7 @@ class EdicionSoloCoordinadorAsignadoTests(BaseTickets):
     def test_el_cliente_sigue_pudiendo_lo_suyo(self):
         c = self._con(self.cli)
         self.assertFalse(c.get(f'/api/tickets/{self.t.id}/').data['puede_editar'])
-        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'unidad': 'Kenworth'}, format='json').status_code, 200)   # su propia edición
+        self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'unidad': 'Kenworth'}, format='json').status_code, 403)   # el cliente ya no edita
         self.assertEqual(c.patch(f'/api/tickets/{self.t.id}/', {'estatus': 'terminado'}, format='json').status_code, 403)
         self.assertEqual(c.post(f'/api/tickets/{self.t.id}/agregar_comentario/', {'texto': 'Hola'}, format='json').status_code, 201)
         self.assertEqual(self._con(self.cli2).get(f'/api/tickets/{self.t.id}/').status_code, 404)    # y no ve los de otros clientes
@@ -1095,8 +1095,8 @@ class ReasignarTecnicoMapaTests(BaseTickets):
     def test_solo_el_coordinador_asignado_reasigna(self):
         body = {'tecnico_id': self.tec1.id}
         self.assertEqual(self._con(self.karen).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 403)
-        self.assertEqual(self._con(self.admin).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 403)
         self.assertEqual(self._con(self.carlo).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 200)
+        self.assertEqual(self._con(self.admin).post(f'/api/tickets/{self.t.id}/asignar_tecnico/', body, format='json').status_code, 200)   # el admin puede con todos
 
     def test_distancia_haversine(self):
         from .servicios import distancia_km, coordenada_valida
@@ -1281,3 +1281,110 @@ class MejorasChatYResenasTests(APITestCase):
             self.assertEqual(views._texto_tiempo_sla(), '5 segundos')
         finally:
             views.SLA_SEGUNDOS_PENDIENTE = anterior
+
+
+class PeticionesDel14OctTests(APITestCase):
+    """Folio TD en solicitudes a técnico, ubicación en tiempo real, filtros y notificaciones del cliente."""
+
+    def setUp(self):
+        mk = lambda u, rol, **kw: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                           email_verificado=True, **kw)
+        self.cliente = mk('cli_p', 'cliente', empresa='ACME')
+        self.coord = mk('coord_p', 'coordinador')
+        self.tec = Tecnico.objects.create(nombre='Juan', categoria='motor_diesel', ciudad='X', estado='Y',
+                                          telefono='1', latitud=0, longitud=0)
+
+    def test_solicitud_a_tecnico_recibe_folio_td(self):
+        self.client.force_authenticate(self.cliente)
+        r = self.client.post('/api/solicitud/', {
+            'nombre_completo': 'Cli P', 'telefono': '5555555555', 'email': 'cli_p@x.com', 'empresa': 'ACME',
+            'unidad': 'U1', 'lugar': 'CDMX', 'problema': 'No arranca', 'tipo_solicitud': 'tecnico',
+            'tecnico_id': self.tec.id, 'latitud': 19.4, 'longitud': -99.1,
+        }, format='json')
+        self.assertIn(r.status_code, (200, 201), getattr(r, 'data', r))
+        t = Ticket.objects.get(cliente=self.cliente)
+        self.assertRegex(t.ticket_id, r'^TD\d{3}$')
+
+    def test_ubicacion_en_tiempo_real(self):
+        t = Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1', cliente=self.cliente,
+                                  coordinador=self.coord, estatus='atendido')
+        self.client.force_authenticate(self.cliente)
+        r = self.client.post(f'/api/tickets/{t.id}/ubicacion/', {'lat': 19.43, 'lng': -99.13, 'precision': 12}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        t.refresh_from_db()
+        self.assertTrue(t.ubicacion_compartiendo)
+        self.assertAlmostEqual(t.ubicacion_lat, 19.43)
+        self.assertTrue(Notificacion.objects.filter(destinatario=self.coord, tipo='ubicacion').exists())
+        # El coordinador no la puede mandar por el cliente
+        self.client.force_authenticate(self.coord)
+        self.assertEqual(self.client.post(f'/api/tickets/{t.id}/ubicacion/', {'lat': 1, 'lng': 1}, format='json').status_code, 403)
+        # Detener
+        self.client.force_authenticate(self.cliente)
+        self.client.post(f'/api/tickets/{t.id}/ubicacion/', {'detener': True}, format='json')
+        t.refresh_from_db(); self.assertFalse(t.ubicacion_compartiendo)
+
+    def test_filtros_de_fecha_y_estatus(self):
+        Ticket.objects.create(empresa='A', fecha=date(2026, 1, 5), unidad='U', estatus='pendiente', coordinador=self.coord)
+        Ticket.objects.create(empresa='B', fecha=date(2026, 3, 5), unidad='U', estatus='terminado', coordinador=self.coord)
+        self.client.force_authenticate(self.coord)
+        r = self.client.get('/api/tickets/?estatus=pendiente')
+        self.assertEqual([x['empresa'] for x in r.data['results']], ['A'])
+        r = self.client.get('/api/tickets/?fecha_desde=2026-02-01&fecha_hasta=2026-12-31')
+        self.assertEqual([x['empresa'] for x in r.data['results']], ['B'])
+        r = self.client.get('/api/tickets/?estatus=pendiente,terminado')
+        self.assertEqual(r.data['count'], 2)
+
+    def test_cliente_no_ve_avisos_de_cambios_ni_de_tecnico(self):
+        for tipo in ('cambio_estatus', 'tecnico_asignado', 'calificar_servicio', 'comentario'):
+            Notificacion.objects.create(destinatario=self.cliente, titulo=tipo, mensaje='x', tipo=tipo)
+        self.client.force_authenticate(self.cliente)
+        tipos = {n['tipo'] for n in self.client.get('/api/notificaciones/').data}
+        self.assertEqual(tipos, {'calificar_servicio', 'comentario'})
+
+    def test_cliente_nombre_en_ticket(self):
+        t = Ticket.objects.create(empresa='ACME', fecha=date.today(), unidad='U1', cliente=self.cliente, coordinador=self.coord)
+        self.client.force_authenticate(self.coord)
+        self.assertEqual(self.client.get(f'/api/tickets/{t.id}/').data['cliente_nombre'], self.cliente.nombre_completo)
+        r = self.client.get('/api/usuarios/clientes/')
+        self.assertEqual(r.data[0]['empresa'], 'ACME')
+
+
+class PapeleraMasivaYUsuariosTests(APITestCase):
+    def setUp(self):
+        mk = lambda u, rol, **kw: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                           email_verificado=True, **kw)
+        self.admin = mk('adm_pm', 'admin')
+        self.coord = mk('coord_pm', 'coordinador')
+        self.otro = mk('otro_pm', 'coordinador')
+        mk('inactivo_pm', 'cliente', is_active=False)
+        mk('activo_pm', 'cliente')
+        hoy = date.today()
+        self.t1 = Ticket.objects.create(empresa='A', fecha=hoy, unidad='U', estatus='pendiente', coordinador=self.coord, ticket_id='TD001')
+        self.t2 = Ticket.objects.create(empresa='B', fecha=hoy, unidad='U', estatus='terminado', coordinador=self.coord, ticket_id='TD002')
+        self.t3 = Ticket.objects.create(empresa='C', fecha=hoy, unidad='U', estatus='pendiente', coordinador=self.otro, ticket_id='TD003')
+
+    def test_inactivos_hasta_abajo(self):
+        self.client.force_authenticate(self.admin)
+        lista = self.client.get('/api/usuarios/').data['results']
+        activos = [u['is_active'] for u in lista]
+        self.assertEqual(activos, sorted(activos, reverse=True))
+
+    def test_admin_manda_todos_los_filtrados_a_la_papelera_y_los_restaura(self):
+        self.client.force_authenticate(self.admin)
+        r = self.client.post('/api/tickets/mandar_a_papelera/?estatus=pendiente', {'todos': True}, format='json')
+        self.assertEqual(r.data['movidos'], 2)
+        self.assertEqual(set(Ticket.objects.filter(eliminado=True).values_list('pk', flat=True)), {self.t1.pk, self.t3.pk})
+        r = self.client.post('/api/tickets/restaurar_todos/', {'todos': True}, format='json')
+        self.assertEqual(r.data['restaurados'], 2)
+        self.assertFalse(Ticket.objects.filter(eliminado=True).exists())
+
+    def test_coordinador_solo_mueve_los_suyos(self):
+        self.client.force_authenticate(self.coord)
+        r = self.client.post('/api/tickets/mandar_a_papelera/', {'ids': [self.t1.pk, self.t3.pk]}, format='json')
+        self.assertEqual(r.data['movidos'], 1)
+        self.t3.refresh_from_db(); self.assertFalse(self.t3.eliminado)
+
+    def test_cliente_no_puede(self):
+        cli = User.objects.get(username='activo_pm')
+        self.client.force_authenticate(cli)
+        self.assertEqual(self.client.post('/api/tickets/mandar_a_papelera/', {'todos': True}, format='json').status_code, 403)

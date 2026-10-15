@@ -4,6 +4,18 @@ import { useAuth } from '../context/AuthContext'
 import Sidebar from '../components/Sidebar'
 import api from '../api/client'
 
+// Convierte coordenadas en una dirección legible (OpenStreetMap). Si falla, se usan las coordenadas.
+async function direccionDe(lat, lng) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=16&accept-language=es`)
+    if (!r.ok) return null
+    const d = await r.json()
+    const a = d.address || {}
+    const partes = [a.road, a.suburb || a.village || a.town, a.city || a.county, a.state].filter(Boolean)
+    return partes.length ? partes.join(', ') : d.display_name || null
+  } catch { return null }
+}
+
 export default function SolicitarServicioPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -17,6 +29,22 @@ export default function SolicitarServicioPage() {
     unidad: '',
     problema: ''
   })
+  const [ubicando, setUbicando] = useState(false)
+  const [errorUbicacion, setErrorUbicacion] = useState('')
+  const usarMiUbicacion = () => {
+    if (!navigator.geolocation) { setErrorUbicacion('Tu navegador no permite obtener la ubicación.'); return }
+    setUbicando(true); setErrorUbicacion('')
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const { latitude: lat, longitude: lng } = pos.coords
+      const dir = await direccionDe(lat, lng)
+      const texto = `${dir ? dir + ' ' : ''}(GPS ${lat.toFixed(5)}, ${lng.toFixed(5)})`
+      setForm(f => ({ ...f, lugar: texto }))
+      setUbicando(false)
+    }, err => {
+      setUbicando(false)
+      setErrorUbicacion(err.code === 1 ? 'Activa el permiso de ubicación en tu navegador.' : 'No se pudo obtener tu ubicación.')
+    }, { enableHighAccuracy: true, timeout: 15000 })
+  }
   const [enviando, setEnviando] = useState(false)
   const [error,    setError]    = useState('')
 
@@ -111,8 +139,20 @@ export default function SolicitarServicioPage() {
             {/* Lugar */}
             <div>
               <label style={{ color: 'white', fontSize: '0.9rem', fontWeight: 500, display: 'block', marginBottom: 6 }}>Lugar o ubicación *</label>
-              <input placeholder="Carretera / ciudad, estado" required value={form.lugar}
-                onChange={e => setForm({ ...form, lugar: e.target.value })} style={inputStyle} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input placeholder="Carretera / ciudad, estado" required value={form.lugar}
+                  onChange={e => setForm({ ...form, lugar: e.target.value })} style={{ ...inputStyle, flex: 1 }} />
+                <button type="button" onClick={usarMiUbicacion} disabled={ubicando}
+                  title="Llena el lugar con tu ubicación actual (GPS)"
+                  style={{ whiteSpace: 'nowrap', border: 0, borderRadius: 8, padding: '0 14px', cursor: 'pointer',
+                    background: 'var(--naranja)', color: 'white', fontWeight: 600 }}>
+                  {ubicando ? '⏳' : '📍 Mi ubicación'}
+                </button>
+              </div>
+              {errorUbicacion && <div style={{ color: '#fca5a5', fontSize: '0.8rem', marginTop: 4 }}>{errorUbicacion}</div>}
+              <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.75rem', marginTop: 4 }}>
+                Después podrás compartir tu ubicación en tiempo real desde tu Bitácora.
+              </div>
             </div>
 
             {/* Tipo de unidad */}

@@ -1,5 +1,30 @@
 import { useState } from 'react'
 
+// Cara y texto según las estrellas: las calificaciones bajas llevan caras TRISTES.
+export const CARAS_CALIFICACION = {
+  1: { emoji: '😭', texto: 'Muy malo', color: '#dc2626' },
+  2: { emoji: '😞', texto: 'Malo', color: '#ea580c' },
+  3: { emoji: '😐', texto: 'Regular', color: '#ca8a04' },
+  4: { emoji: '😊', texto: 'Bueno', color: '#16a34a' },
+  5: { emoji: '🤩', texto: '¡Excelente!', color: '#059669' },
+}
+export const esCalificacionMala = n => Number(n) > 0 && Number(n) <= 2
+
+/** Cara grande que cambia (con un pequeño salto) según la calificación elegida. */
+export function CaraCalificacion({ valor, tamano = 44 }) {
+  const cara = CARAS_CALIFICACION[Math.round(Number(valor))]
+  if (!cara) return null
+  return (
+    <span key={valor} role="img" aria-label={cara.texto}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, animation: 'caraSalta 0.35s ease-out' }}>
+      <style>{`@keyframes caraSalta { 0% { transform: scale(0.4); opacity: 0 } 70% { transform: scale(1.15) } 100% { transform: scale(1); opacity: 1 } }
+        @media (prefers-reduced-motion: reduce) { [aria-label="${cara.texto}"] { animation: none !important; } }`}</style>
+      <span style={{ fontSize: tamano, lineHeight: 1 }}>{cara.emoji}</span>
+      <span style={{ fontWeight: 700, color: cara.color, fontSize: Math.max(13, tamano * 0.36) }}>{cara.texto}</span>
+    </span>
+  )
+}
+
 // Calificación con estrellas (1 a 5).
 // Editable:   <Estrellas valor={n} onChange={setN} etiqueta="Calificación del técnico" />
 // Solo vista: <Estrellas valor={4} soloLectura tamano={20} etiqueta="Calificación del servicio" />

@@ -7,6 +7,7 @@ import PasswordInput from '../components/PasswordInput'
 import { EsqueletoTabla } from '../components/Esqueleto'
 import { EncabezadoPagina } from '../components/ui'
 import CamionTitulo from '../components/CamionTitulo'
+import useAutoRefresh from '../hooks/useAutoRefresh'
 
 const ROLES = ['admin', 'coordinador', 'cliente']
 
@@ -176,6 +177,8 @@ export default function UsuariosPage() {
   }
 
   useEffect(() => { fetchUsers() }, [])
+  // Actualización automática (sin spinner): altas, bajas y cambios de otros administradores
+  useAutoRefresh(() => api.get('/usuarios/').then(({ data }) => setUsuarios(data.results || data)), { soloVisible: true })
 
   const filtrados = usuarios.filter(u => {
     const matchRol = !filtroRol || u.rol === filtroRol
@@ -185,6 +188,8 @@ export default function UsuariosPage() {
       u.nombre?.toLowerCase().includes(busqueda.toLowerCase())
     return matchRol && matchBusq
   })
+    // Activos arriba, inactivos hasta abajo (dentro de cada grupo se respeta el orden de registro)
+    .sort((a, b) => Number(b.is_active) - Number(a.is_active))
 
   const contar = rol => usuarios.filter(u => u.rol === rol).length
   const inactivos = usuarios.filter(u => !u.is_active).length

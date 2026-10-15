@@ -18,7 +18,7 @@ def puede_gestionar_ticket(user, ticket):
 
     - Coordinador: solo el coordinador asignado. Si el ticket aún no tiene coordinador, cualquiera puede
       tomarlo (al guardar, se queda con él).
-    - Administrador: solo lectura, salvo que se active ADMIN_PUEDE_EDITAR_TICKETS.
+    - Administrador: edita TODOS los tickets (se puede desactivar con ADMIN_PUEDE_EDITAR_TICKETS=false).
     - Cliente: no edita (sus acciones propias —comentar, confirmar finalización, calificar— van aparte).
     """
     if not (user and getattr(user, 'is_authenticated', False)) or ticket.eliminado:
@@ -26,7 +26,7 @@ def puede_gestionar_ticket(user, ticket):
     if user.rol == 'coordinador':
         return ticket.coordinador_id is None or ticket.coordinador_id == user.id
     if user.rol == 'admin':
-        return bool(getattr(settings, 'ADMIN_PUEDE_EDITAR_TICKETS', False))
+        return bool(getattr(settings, 'ADMIN_PUEDE_EDITAR_TICKETS', True))
     return False
 
 
