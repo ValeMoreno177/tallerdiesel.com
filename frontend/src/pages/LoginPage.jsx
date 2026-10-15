@@ -71,9 +71,9 @@ export default function LoginPage() {
         </button>}
       </nav>
 
-      <div className="login-grid" style={{ position: 'relative', zIndex: 1, flex: 1, display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '2rem', padding: '2.5rem 4rem', maxWidth: 1400, margin: '0 auto', width: '100%', alignItems: 'start' }}>
+      <div className="login-grid" style={{ position: 'relative', zIndex: 1, flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 420px) minmax(0, 1fr)', gap: '2rem', padding: '2.5rem 4rem', maxWidth: 1400, margin: '0 auto', width: '100%', boxSizing: 'border-box', alignItems: 'center', alignContent: 'center' }}>
         {/* Features izquierda */}
-        <div className="login-features" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="login-features" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: 370, justifySelf: 'end' }}>
           {FEATURES_LEFT.map((f, i) => (
             <div key={i} style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', borderRadius: 12, padding: '1rem 1.25rem', border: '1px solid rgba(255,255,255,0.15)', display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
               <span style={{ fontSize: '1.5rem', marginTop: 2 }}>{f.icon}</span>
@@ -86,7 +86,7 @@ export default function LoginPage() {
         </div>
 
         {/* Login card */}
-        <div className="login-card" style={{ width: 'min(400px, 100%)', boxSizing: 'border-box', background: 'rgba(255,255,255,0.97)', borderRadius: 16, padding: '1.75rem', boxShadow: '0 25px 50px rgba(0,0,0,0.4)' }}>
+        <div className="login-card" style={{ width: '100%', justifySelf: 'center', boxSizing: 'border-box', background: 'rgba(255,255,255,0.97)', borderRadius: 16, padding: '1.75rem', boxShadow: '0 25px 50px rgba(0,0,0,0.4)' }}>
           <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: '1.5rem' }}>
             {['login', 'registro'].map(t => (
               <button key={t} onClick={() => { setTab(t); setError('') }}
@@ -152,7 +152,7 @@ export default function LoginPage() {
         </div>
 
         {/* Features derecha */}
-        <div className="login-features" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="login-features" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%', maxWidth: 370, justifySelf: 'start' }}>
           {FEATURES_RIGHT.map((f, i) => (
             <div key={i} style={{ background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', borderRadius: 12, padding: '1rem 1.25rem', border: '1px solid rgba(255,255,255,0.15)', display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
               <span style={{ fontSize: '1.5rem', marginTop: 2 }}>{f.icon}</span>
