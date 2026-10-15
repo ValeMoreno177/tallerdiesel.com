@@ -162,7 +162,7 @@ export default function MapaTecnicosPage() {
 
       <Sidebar />
      <main
-        className="main-content-fluid"
+        className="main-content-fluid mapa-pagina"
         style={{
           flex: 1,
           background:
@@ -342,8 +342,10 @@ export default function MapaTecnicosPage() {
 
         {/* Buscador */}
         <div
+          className="mapa-buscador"
           style={{
             display: "flex",
+            flexWrap: "wrap",
             gap: "0.75rem",
             marginBottom: "1.25rem",
             width: "100%",

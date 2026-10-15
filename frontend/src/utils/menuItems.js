@@ -4,6 +4,7 @@ export function getMenuItems(user) {
     return [
       { to: '/admin/dashboard', label: 'Dashboard', icon: '▦' },
       { to: '/admin/bitacora', label: 'Bitácora', icon: '☰' },
+      { to: '/admin/nueva-solicitud', label: 'Nueva solicitud', icon: '➕' },
       { to: '/admin/usuarios', label: 'Usuarios', icon: '👥' },
       { to: '/mapa-tecnicos', label: 'Mapa de Técnicos', icon: '🗺️' },
     ]
@@ -12,6 +13,7 @@ export function getMenuItems(user) {
     return [
       { to: '/coordinador/dashboard', label: 'Dashboard', icon: '▦' },
       { to: '/coordinador/bitacora', label: 'Bitácora', icon: '☰' },
+      { to: '/coordinador/nueva-solicitud', label: 'Nueva solicitud', icon: '➕' },
       ...(user?.puede_editar_sistema
         ? [{ to: '/coordinador/usuarios', label: 'Usuarios', icon: '👥' }]
         : []),
@@ -24,5 +26,6 @@ export function getMenuItems(user) {
     { to: '/solicitar-servicio', label: 'Solicitar a Coordinador', icon: '📍' },
     { to: '/solicitar-tecnico', label: 'Solicitar a Técnico', icon: '🔧' },
     { to: '/cliente/bitacora', label: 'Bitácora', icon: '🧑‍💼' },
+    { to: '/cliente/perfil', label: 'Mi perfil', icon: '👤' },
   ]
 }

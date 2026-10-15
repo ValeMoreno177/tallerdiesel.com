@@ -201,3 +201,62 @@ def coordenada_valida(lat, lng):
     if not (-90 <= lat <= 90 and -180 <= lng <= 180) or (math.isnan(lat) or math.isnan(lng)):
         return None
     return lat, lng
+
+
+# ── Alta automática de clientes (módulo "Nueva solicitud" del coordinador) ────
+
+import re as _re
+import secrets as _secrets
+import unicodedata as _unicodedata
+
+DOMINIO_SIN_CORREO = 'sin-correo.invalid'   # clientes dados de alta sin correo (no recibe mensajes)
+
+
+def _sin_acentos(texto):
+    return ''.join(c for c in _unicodedata.normalize('NFD', texto or '') if _unicodedata.category(c) != 'Mn')
+
+
+def generar_usuario(nombre, apellido=''):
+    """'Juan', 'Pérez' → 'jperez' (o 'jperez2', 'jperez3'… si ya existe)."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    nombre = _re.sub(r'[^a-z0-9]', '', _sin_acentos(nombre).lower())
+    apellido = _re.sub(r'[^a-z0-9]', '', _sin_acentos(apellido).lower())
+    base = ((nombre[:1] + apellido) if apellido else nombre) or 'cliente'
+    base = base[:20]
+    candidato, n = base, 1
+    while User.objects.filter(username__iexact=candidato).exists():
+        n += 1
+        candidato = f'{base}{n}'
+    return candidato
+
+
+def generar_password(largo=10):
+    """Contraseña aleatoria fácil de dictar (sin 0/O, 1/l/I) con letras y números."""
+    letras = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ'
+    numeros = '23456789'
+    while True:
+        pw = ''.join(_secrets.choice(letras + numeros) for _ in range(largo))
+        if any(c in numeros for c in pw) and any(c.isupper() for c in pw) and any(c.islower() for c in pw):
+            return pw
+
+
+def solo_digitos(texto):
+    return _re.sub(r'\D', '', texto or '')
+
+
+def buscar_cliente_existente(email='', telefono=''):
+    """Busca un cliente por correo o por teléfono (últimos 10 dígitos)."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    email = (email or '').strip()
+    if email:
+        u = User.objects.filter(rol='cliente', email__iexact=email).first()
+        if u:
+            return u
+    tel = solo_digitos(telefono)[-10:]
+    if len(tel) >= 8:
+        for u in User.objects.filter(rol='cliente').exclude(telefono=''):
+            if solo_digitos(u.telefono)[-10:] == tel:
+                return u
+    return None

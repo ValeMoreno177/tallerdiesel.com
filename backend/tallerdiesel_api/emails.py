@@ -193,3 +193,28 @@ def email_tecnico_asignado(tecnico_nombre, ticket_id, es_cambio, url_destino):
       {_boton('Ver detalle del servicio →', url_destino)}
     """
     return _wrapper(contenido)
+
+
+def email_credenciales(nombre, usuario, password, url_login, es_restablecimiento=False):
+    """Correo con el usuario y la contraseña que el taller generó para el cliente."""
+    from html import escape
+    titulo = 'Tu nueva contraseña' if es_restablecimiento else '¡Bienvenido a TallerDiesel!'
+    intro = ('El taller restableció tu contraseña. Estos son tus nuevos datos de acceso:'
+             if es_restablecimiento else
+             'Tu coordinador registró tu servicio y creó tu cuenta. Con estos datos puedes seguir tu servicio, '
+             'chatear con el taller y calificar al técnico:')
+    contenido = f"""
+      <h2 style="font-family:Arial,sans-serif;font-size:20px;color:#111827;margin:0 0 6px;">{escape(titulo)}</h2>
+      <p style="font-family:Arial,sans-serif;font-size:14px;color:#374151;line-height:1.5;margin:0 0 18px;">
+        Hola {escape(nombre or '')}, {escape(intro)}
+      </p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        {_fila('Usuario', escape(usuario))}
+        {_fila('Contraseña', escape(password))}
+      </table>
+      {_boton('Entrar a TallerDiesel', url_login)}
+      <p style="font-family:Arial,sans-serif;font-size:12px;color:#9ca3af;margin-top:18px;">
+        Guarda estos datos. Si los olvidas, pide al taller que te genere una contraseña nueva.
+      </p>
+    """
+    return _wrapper(contenido)

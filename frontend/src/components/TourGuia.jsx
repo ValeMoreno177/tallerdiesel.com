@@ -8,7 +8,7 @@ const TEXTOS = {
   '/cliente/dashboard': 'Aquí ves el resumen de tus servicios, cuántos están en curso, cuántos ya terminaron y si tienes pagos pendientes.',
   '/solicitar-servicio': 'Pide ayuda a un coordinador. Él te asignara un técnico y le dara seguimiento a tu servicio de principio a fin .',
   '/solicitar-tecnico': 'Elige en el mapa a un técnico cercano y solicítalo directamente, sin pasar por un coordinador.',
-  '/cliente/bitacora': 'Aquí encontrarás el estatus de tus servicios, comentarios, evidencias y también podras visualizar cuando este sea finalizado.',
+  '/cliente/bitacora': 'Aquí encontrarás el estatus de tus servicios, comentarios y evidencias.También podras visualizar cunado se finalice tu servicio.',
   '/admin/dashboard': 'Resumen ejecutivo del negocio: ingresos, ganancia, servicios en proceso y estado de las facturas.',
   '/coordinador/dashboard': 'Resumen de tus servicios: cuántos están en proceso, pendientes o finalizados.',
   '/admin/bitacora': 'El registro de todos los servicios (tickets). Agrega y edita servicios, asigna técnicos, revisa totales y facturas, y sube evidencias.',
@@ -17,12 +17,15 @@ const TEXTOS = {
   '/coordinador/usuarios': 'Administra las cuentas del sistema: clientes y coordinadores.',
   '/mapa-tecnicos': 'Mapa con los técnicos disponibles por zona, con su disponibilidad y calificaciones.',
   '/coordinador/perfil': 'Tu perfil: sube o cambia tu foto y actualiza tu contraseña.',
+  '/cliente/perfil': 'Tu perfil: tus datos y tu foto.',
+  '/coordinador/nueva-solicitud': 'Registra un servicio a nombre de un cliente. Si no existe, el sistema lo da de alta con usuario y contraseña.',
+  '/admin/nueva-solicitud': 'Registra un servicio a nombre de un cliente. Si no existe, el sistema lo da de alta con usuario y contraseña.',
 }
 
 function construirPasos(user) {
   const pasos = [{
     titulo: `¡Bienvenido${user?.nombre ? ' ' + user.nombre : ''} a TallerDiesel!`,
-    texto: 'Te mostramos rápido para qué sirve cada sección, puedes omitir el recorrido cuando quieras.',
+    texto: 'Te mostramos rápido para qué sirve cada sección, Puedes omitir el recorrido cuando quieras.',
   }]
   getMenuItems(user).forEach(it => {
     pasos.push({
@@ -33,9 +36,9 @@ function construirPasos(user) {
     })
   })
   pasos.push({
-    target: '[data-tour=""]',
+    target: '[data-tour="tutorial"]',
     titulo: '¡Listo! 🎉',
-    texto: 'Cuando quieras volver a ver este recorrido, usa el botón "Ver tutorial" del menú.',
+    texto: 'En los tres puntos (⋮) junto a tu nombre encuentras el modo oscuro, descargar la app y "Ver tutorial" para repetir este recorrido.',
   })
   return pasos
 }

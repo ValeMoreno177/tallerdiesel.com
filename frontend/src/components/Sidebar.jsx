@@ -1,10 +1,11 @@
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getMenuItems } from "../utils/menuItems";
 import Avatar from "./Avatar";
 import { aplicarTema } from "../utils/tema";
 import { avisosDisponibles, permisoAvisos, pedirPermisoAvisos } from "../utils/avisosSistema";
+import { abrirInstalarApp } from "./InstalarApp";
 
 const LOGO = () => (
   <div
@@ -35,19 +36,6 @@ export default function Sidebar() {
   // Avisos del sistema (barra del celular / esquina de la computadora)
   const [permiso, setPermiso] = useState(() => permisoAvisos());
   const activarAvisos = async () => setPermiso(await pedirPermisoAvisos());
-  // "Instalar app" (Chrome/Edge/Android ofrecen el evento beforeinstallprompt)
-  const [instalable, setInstalable] = useState(null);
-  useEffect(() => {
-    const alOfrecer = e => { e.preventDefault(); setInstalable(e); };
-    window.addEventListener("beforeinstallprompt", alOfrecer);
-    return () => window.removeEventListener("beforeinstallprompt", alOfrecer);
-  }, []);
-  const instalarApp = async () => {
-    if (!instalable) return;
-    instalable.prompt();
-    try { await instalable.userChoice; } catch { /* nada */ }
-    setInstalable(null);
-  };
   const cambiarTema = () => {
     const nuevo = tema === 'oscuro' ? 'claro' : 'oscuro';
     aplicarTema(nuevo);
@@ -59,6 +47,23 @@ export default function Sidebar() {
 
   const [tecnicoEnviado, setTecnicoEnviado] = useState(false);
   const [menuAbierto, setMenuAbierto] = useState(false);
+  // Menú de los tres puntos (⋮) junto al nombre
+  const [opcionesAbiertas, setOpcionesAbiertas] = useState(false);
+  const opcionesRef = useRef(null);
+  useEffect(() => {
+    if (!opcionesAbiertas) return undefined;
+    const fuera = e => { if (!opcionesRef.current?.contains(e.target)) setOpcionesAbiertas(false); };
+    const esc = e => { if (e.key === "Escape") setOpcionesAbiertas(false); };
+    document.addEventListener("mousedown", fuera);
+    document.addEventListener("touchstart", fuera);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fuera);
+      document.removeEventListener("touchstart", fuera);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [opcionesAbiertas]);
+  const opcion = fn => () => { setOpcionesAbiertas(false); fn(); };
 
   useEffect(() => {
     setTecnicoEnviado(
@@ -97,7 +102,7 @@ export default function Sidebar() {
           <LOGO />
         </div>
 
-        <div className="sidebar-user">
+        <div className="sidebar-user" ref={opcionesRef}>
           <div
             style={{
               display: "flex",
@@ -107,7 +112,7 @@ export default function Sidebar() {
           >
             <Avatar usuario={user} size={34} />
 
-            <div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div className="username">
                 {user?.nombre || user?.username}
               </div>
@@ -123,7 +128,26 @@ export default function Sidebar() {
                   : "Cliente"}
               </span>
             </div>
+            <button type="button" className="sidebar-opciones-btn" data-tour="tutorial"
+              aria-label="Más opciones" aria-haspopup="menu" aria-expanded={opcionesAbiertas}
+              title="Más opciones" onClick={() => setOpcionesAbiertas(v => !v)}>
+              ⋮
+            </button>
           </div>
+          {opcionesAbiertas && (
+            <div className="sidebar-opciones" role="menu">
+              <button role="menuitem" onClick={opcion(cambiarTema)}>
+                {tema === "oscuro" ? "☀️ Modo claro" : "🌙 Modo oscuro"}
+              </button>
+              <button role="menuitem" onClick={opcion(iniciarTour)}>❓ Ver tutorial</button>
+              <button role="menuitem" onClick={opcion(abrirInstalarApp)}>
+                📲 Descargar app
+              </button>
+              {avisosDisponibles() && permiso === "default" && (
+                <button role="menuitem" onClick={opcion(activarAvisos)}>🔔 Activar avisos</button>
+              )}
+            </div>
+          )}
         </div>
 
         <nav className="sidebar-nav">
@@ -144,19 +168,6 @@ export default function Sidebar() {
         </nav>
 
         <div className="sidebar-bottom">
-          {instalable && (
-            <button onClick={instalarApp} style={{ marginBottom: 6 }}>📲 Instalar app</button>
-          )}
-          {avisosDisponibles() && permiso === "default" && (
-            <button onClick={activarAvisos} style={{ marginBottom: 6 }}>🔔 Activar avisos</button>
-          )}
-          <button className="btn-tema" onClick={cambiarTema} style={{ marginBottom: 6 }}
-            aria-label={tema === 'oscuro' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}>
-            {tema === 'oscuro' ? '☀️ Modo claro' : '🌙 Modo oscuro'}
-          </button>
-          <button data-tour="tutorial" onClick={iniciarTour} style={{ marginBottom: 6 }}>
-            ❓ Ver tutorial
-          </button>
           <button onClick={handleLogout}>
             🚪 Cerrar sesión
           </button>

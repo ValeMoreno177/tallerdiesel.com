@@ -444,7 +444,8 @@ export default function PerfilPage() {
 
         {/* ── Tarjetas: foto y contraseña ── */}
         <div className="perfil-grid">
-          {/* Contraseña */}
+          {/* Contraseña (el cliente no la cambia desde aquí: si la olvida, la recupera por correo o se la restablece el taller) */}
+          {user?.rol !== 'cliente' && (
           <form className="perfil-card" onSubmit={cambiarPassword}>
             <h2 className="perfil-card-titulo">🔒 Cambiar contraseña</h2>
             <div className="perfil-card-linea" />
@@ -468,6 +469,7 @@ export default function PerfilPage() {
               Al cambiarla se cierra tu sesión en cualquier otro dispositivo.
             </div>
           </form>
+          )}
         </div>
       </main>
 

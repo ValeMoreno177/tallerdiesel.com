@@ -32,5 +32,7 @@ urlpatterns = [
     path('notificaciones/<int:pk>/restaurar/', views.restaurar_notificacion),
     path('notificaciones/leer-todas/',      views.marcar_todas_leidas),
     path('empresas/',                       views.lista_empresas),
+    path('coordinador/nueva-solicitud/',    views.coordinador_nueva_solicitud),
+    path('usuarios/<int:pk>/restablecer-password/', views.restablecer_password_usuario),
     path('empresa-config/',                 views.empresa_config),
 ]

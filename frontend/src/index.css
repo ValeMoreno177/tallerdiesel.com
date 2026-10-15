@@ -18,7 +18,10 @@
 }
 
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { max-width: 100%; overflow-x: hidden; }
+img, video, canvas, svg { max-width: 100%; }
 body {
+  -webkit-tap-highlight-color: transparent;
   font-family: 'Barlow', sans-serif;
   background: var(--gris-claro);
   color: #1a1a1a;
@@ -229,6 +232,19 @@ tbody td { padding: 10px 14px; color: #374151; white-space: nowrap; }
 }
 .sidebar-nav a:hover { color: white; background: rgba(255,255,255,0.05); }
 .sidebar-nav a.active { color: white; background: rgba(232,93,4,0.15); border-left-color: var(--naranja); }
+.sidebar-user { position: relative; }
+.sidebar-opciones-btn { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(255,255,255,0.06); color: #e5e7eb; font-size: 1.2rem; line-height: 1; display: inline-flex;
+  align-items: center; justify-content: center; }
+.sidebar-opciones-btn:hover, .sidebar-opciones-btn[aria-expanded="true"] { background: var(--naranja); color: white; }
+.sidebar-opciones { position: absolute; left: 12px; right: 12px; top: calc(100% - 6px); z-index: 60;
+  background: #1f2937; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 6px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45); display: flex; flex-direction: column; gap: 2px;
+  animation: opcionesAbre 0.15s ease-out; }
+.sidebar-opciones button { width: 100%; text-align: left; background: none; border: 0; color: #e5e7eb; padding: 10px 12px;
+  border-radius: 8px; cursor: pointer; font-size: 0.88rem; }
+.sidebar-opciones button:hover, .sidebar-opciones button:focus-visible { background: rgba(232,93,4,0.2); color: white; outline: none; }
+@keyframes opcionesAbre { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .sidebar-bottom { padding: 1rem; border-top: 1px solid rgba(255,255,255,0.08); }
 .sidebar-bottom button { width: 100%; background: rgba(255,255,255,0.05); border: none; color: #9ca3af; padding: 9px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
 .sidebar-bottom button:hover { background: rgba(255,255,255,0.1); color: white; }
@@ -280,12 +296,17 @@ tbody td { padding: 10px 14px; color: #374151; white-space: nowrap; }
 }
 
 /* ── Responsive ── */
-@media (max-width: 768px) {
-  .sidebar-toggle { display: flex; }
+/* Teléfonos y TABLETS (hasta 1024 px, iPad en vertical y horizontal): el menú lateral se vuelve un botón ☰ */
+@media (max-width: 1024px) {
+  .sidebar-toggle { display: flex; top: calc(0.85rem + env(safe-area-inset-top, 0px)); left: calc(1rem + env(safe-area-inset-left, 0px)); }
   .sidebar {
     transform: translateX(-100%);
     transition: transform 0.25s ease;
     width: min(80vw, 280px);
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .sidebar.open { transform: translateX(0); }
   .sidebar-overlay { display: block; }
@@ -293,10 +314,23 @@ tbody td { padding: 10px 14px; color: #374151; white-space: nowrap; }
   .main-content,
   .main-content-fluid {
     margin-left: 0 !important;
-    padding: 1rem;
-    padding-top: 4.25rem; /* deja espacio para el botón hamburguesa */
+    padding: 1.25rem;
+    padding-top: calc(4.25rem + env(safe-area-inset-top, 0px)); /* deja espacio para el botón ☰ */
+    padding-left: calc(1.25rem + env(safe-area-inset-left, 0px));
+    padding-right: calc(1.25rem + env(safe-area-inset-right, 0px));
   }
-  main.main-content-fluid { padding-top: 4.25rem !important; }
+  main.main-content-fluid { padding-top: calc(4.25rem + env(safe-area-inset-top, 0px)) !important; }
+  .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* Pantallas táctiles: campos a 16 px para que iPhone/iPad no hagan zoom al escribir, y botones más fáciles de tocar */
+@media (pointer: coarse) {
+  input, select, textarea, .form-input, .form-select { font-size: 16px !important; }
+  .btn-sm { min-height: 34px; }
+}
+
+/* Solo teléfonos */
+@media (max-width: 768px) {
 
   .grid-2 { grid-template-columns: 1fr; }
   .grid-stats { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.6rem; }
@@ -389,3 +423,35 @@ html[data-tema="oscuro"] .modal [style*="color: rgb(55, 65, 81)"] { color: #e5e7
 html[data-tema="oscuro"] .leaflet-popup-content-wrapper, html[data-tema="oscuro"] .leaflet-popup-tip { background: #111827; color: #e5e7eb; }
 html[data-tema="oscuro"] .leaflet-popup-content [style*="color: rgb(17, 24, 39)"] { color: #f3f4f6 !important; }
 .btn-tema { display: flex; align-items: center; justify-content: center; gap: 6px; }
+
+
+/* ═══════════ Teléfono y tablet: encabezados, tarjetas y buscadores que se acomodan ═══════════ */
+.page-header { flex-wrap: wrap; gap: 0.75rem 1rem; }
+.page-header-acciones { flex-wrap: wrap; justify-content: flex-end; }
+.bit-buscar { width: 260px; }
+.page-header > div { min-width: 0; }
+@media (max-width: 1024px) {
+  .page-header-acciones { width: 100%; justify-content: flex-start; }
+  .bit-buscar { flex: 1 1 220px; width: auto; min-width: 0; }
+  .camion-titulo { max-width: 100% !important; }
+}
+@media (max-width: 768px) {
+  /* Tarjetas de números: 2 por fila (aunque la pantalla pida 4) */
+  .grid-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .stat-num { font-size: 1.15rem !important; overflow-wrap: anywhere; }
+  .page-header-acciones .btn { padding: 8px 12px; }
+  .page-header-acciones .btn-primary { flex: 1 1 auto; justify-content: center; }
+  /* Mapa de técnicos */
+  .mapa-pagina { padding: calc(4.25rem + env(safe-area-inset-top, 0px)) 1rem 1.5rem !important; }
+  .mapa-pagina h1 { font-size: 1.7rem !important; letter-spacing: 1px !important; }
+  .mapa-pagina > div { max-width: 100%; box-sizing: border-box; }
+  .mapa-pagina > div:first-child { width: 100%; }
+  .bit-tabs { flex-wrap: wrap; }
+  .bit-tabs > button { padding: 8px 12px !important; flex: 1 1 auto; }
+  .mapa-buscador > * { flex: 1 1 140px; min-width: 0; box-sizing: border-box; }
+  .mapa-buscador > input { flex: 1 1 100% !important; }
+  .modal { max-height: calc(100vh - 2rem); max-height: calc(100dvh - 2rem); }
+}
+@media (max-width: 380px) {
+  .stat-card { padding: 0.7rem 0.8rem; }
+}

@@ -161,6 +161,71 @@ function ModalDesactivar({ usuario, onClose, onSaved }) {
   )
 }
 
+function ModalRestablecer({ usuario, onClose }) {
+  const [estado, setEstado] = useState('confirmar')   // confirmar | cargando | listo | error
+  const [datos, setDatos] = useState(null)
+  const [error, setError] = useState('')
+  const [copiado, setCopiado] = useState(false)
+  const restablecer = async () => {
+    setEstado('cargando'); setError('')
+    try {
+      const { data } = await api.post(`/usuarios/${usuario.id}/restablecer-password/`)
+      setDatos(data); setEstado('listo')
+    } catch (e) {
+      setError(e?.response?.data?.error || 'No se pudo restablecer la contraseña.'); setEstado('error')
+    }
+  }
+  const texto = datos ? `Hola ${usuario.nombre_completo || usuario.username}, tu nueva contraseña de TallerDiesel:\n`
+    + `Entra en ${window.location.origin}/login\nUsuario: ${datos.usuario}\nContraseña: ${datos.password}` : ''
+  const tel = (usuario.telefono || '').replace(/\D/g, '')
+  const whatsapp = datos && tel ? `https://wa.me/${tel.length === 10 ? '52' + tel : tel}?text=${encodeURIComponent(texto)}` : null
+  const copiar = () => {
+    const ok = () => setCopiado(true)
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(texto).then(ok).catch(() => {})
+    else { const t = document.createElement('textarea'); t.value = texto; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); ok() } catch { /* */ } t.remove() }
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: '2.5rem', textAlign: 'center' }}>🔑</div>
+        <h3 className="modal-title" style={{ textAlign: 'center' }}>Restablecer contraseña</h3>
+        {estado !== 'listo' ? (
+          <>
+            <p style={{ color: '#6b7280', fontSize: '0.875rem', textAlign: 'center', margin: '0.5rem 0 1.25rem' }}>
+              Se generará una contraseña nueva para <strong>{usuario.username}</strong>. La anterior dejará de funcionar
+              y se cerrarán sus sesiones abiertas.
+            </p>
+            {error && <div role="alert" style={{ background: '#fef2f2', color: '#991b1b', padding: '8px 12px', borderRadius: 8, fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+              <button className="btn btn-primary" onClick={restablecer} disabled={estado === 'cargando'}>
+                {estado === 'cargando' ? 'Generando…' : 'Generar nueva contraseña'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ background: '#111827', color: 'white', borderRadius: 12, padding: '1rem', marginTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0' }}>
+                <span>Usuario</span><code style={{ color: '#fdba74', fontWeight: 700 }}>{datos.usuario}</code></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0' }}>
+                <span>Contraseña</span><code style={{ color: '#fdba74', fontWeight: 700, fontSize: '1.15rem', letterSpacing: 1 }}>{datos.password}</code></div>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: '#6b7280', margin: '10px 0' }}>
+              Dásela ahora: por seguridad no se vuelve a mostrar{datos.correo_enviado ? ' (también se envió a su correo).' : '.'}
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={copiar}>{copiado ? '✓ Copiado' : '📋 Copiar'}</button>
+              {whatsapp && <a className="btn" href={whatsapp} target="_blank" rel="noreferrer" style={{ background: '#059669', color: 'white', textDecoration: 'none' }}>💬 WhatsApp</a>}
+              <button className="btn btn-primary" onClick={onClose}>Listo</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function UsuariosPage() {
   const { user: viewer } = useAuth()
   const viewerEsAdmin = viewer?.rol === 'admin'
@@ -220,7 +285,7 @@ export default function UsuariosPage() {
         </div>
 
         <div className="card" style={{ padding: 0 }}>
-          <div style={{ padding: '1rem 1.25rem', display: 'flex', gap: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>
+          <div style={{ padding: '1rem 1.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>
             <input className="form-input" placeholder="Buscar por nombre, usuario, correo..."
               value={busqueda} onChange={e => setBusqueda(e.target.value)} style={{ flex: 1 }} />
             <select className="form-select" value={filtroRol} onChange={e => setFiltroRol(e.target.value)}>
@@ -261,6 +326,10 @@ export default function UsuariosPage() {
                               <button className="btn btn-sm btn-ghost" onClick={() => { setSelected(u); setModal('editar') }}>✏️</button>
                               <button className="btn btn-sm btn-ghost" style={{ color: u.is_active ? '#dc2626' : '#059669' }}
                                 onClick={() => { setSelected(u); setModal('toggle') }}>🔒</button>
+                              {u.id !== viewer?.id && (viewerEsAdmin ? u.rol !== 'admin' : u.rol === 'cliente') && (
+                                <button className="btn btn-sm btn-ghost" title="Restablecer contraseña (si la olvidó)"
+                                  onClick={() => { setSelected(u); setModal('password') }}>🔑</button>
+                              )}
                             </>
                           )}
                         </div>
@@ -275,6 +344,9 @@ export default function UsuariosPage() {
 
         {(modal === 'nuevo' || modal === 'editar') && (
           <ModalUsuario usuario={modal === 'editar' ? selected : null} onClose={() => setModal(null)} onSaved={fetchUsers} viewerEsAdmin={viewerEsAdmin} />
+        )}
+        {modal === 'password' && selected && (
+          <ModalRestablecer usuario={selected} onClose={() => setModal(null)} />
         )}
         {modal === 'toggle' && selected && (
           <ModalDesactivar usuario={selected} onClose={() => setModal(null)} onSaved={fetchUsers} />

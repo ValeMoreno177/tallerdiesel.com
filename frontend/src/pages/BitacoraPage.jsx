@@ -664,7 +664,7 @@ export default function BitacoraPage({ rol }) {
       <Sidebar />
       <main className="main-content">
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <div>
             <h1 className="page-title">Bitácora</h1>
             <p style={{ color: '#9ca3af', fontSize: '0.875rem' }}>
@@ -678,9 +678,9 @@ export default function BitacoraPage({ rol }) {
             </p>
             <CamionTitulo />
           </div>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <input className="form-input" placeholder="Buscar ticket, empresa, unidad..."
-              value={busqueda} onChange={e => setBusqueda(e.target.value)} style={{ width: 260 }} />
+          <div className="page-header-acciones" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            <input className="form-input bit-buscar" placeholder="Buscar ticket, empresa, unidad..."
+              value={busqueda} onChange={e => setBusqueda(e.target.value)} />
             {(rol === 'admin' || rol === 'coordinador') && tipoFiltro !== 'papelera' && (
               <>
                 <button className="btn btn-ghost" onClick={exportarExcel} disabled={exportando} title="Descargar en Excel con los filtros actuales">
@@ -703,7 +703,7 @@ export default function BitacoraPage({ rol }) {
         </div>
 
         {/* Tabs Técnico / Coordinador */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: '1.25rem', background: 'white', borderRadius: 10, padding: 4, width: 'fit-content', border: '1px solid #e5e7eb' }}>
+        <div className="bit-tabs" style={{ display: 'flex', gap: 4, marginBottom: '1.25rem', background: 'white', borderRadius: 10, padding: 4, width: 'fit-content', maxWidth: '100%', border: '1px solid #e5e7eb' }}>
           {[['todos','📋 Todos'],['coordinador','🧑‍💼 Coordinador'],['tecnico','👷 Técnico'],
             ...(rol === 'admin' || rol === 'coordinador' ? [['papelera','🗑️ Papelera']] : [])
           ].map(([key, label]) => (

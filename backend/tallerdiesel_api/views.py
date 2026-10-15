@@ -27,7 +27,7 @@ from .models import (Ticket, Tecnico, Opinion, Operador, SolicitudServicio,
                      CodigoRecuperacion, UnidadFlotilla, EvidenciaTicket, FotoPerfil)
 from .servicios import (puede_gestionar_ticket, reclamar_ticket, asignar_siguiente_en_espera,
                         asignar_coordinador_automatico, distancia_km, coordenada_valida)
-from .emails import enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
+from .emails import email_credenciales, enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
 from .serializers import (
     UsuarioSerializer, RegistroSerializer, TicketSerializer,
     TecnicoSerializer, OpinionSerializer, OperadorSerializer,
@@ -589,6 +589,10 @@ def cambiar_password(request):
     (invalida sus tokens de renovación) y devuelve tokens nuevos para esta sesión."""
     from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
     user = request.user
+    if user.rol == 'cliente':
+        # El cliente no cambia su contraseña desde su perfil: si la olvida usa "¿Olvidaste tu contraseña?"
+        # o pide al taller que se la restablezca.
+        return Response({'error': 'Para cambiar tu contraseña usa "¿Olvidaste tu contraseña?" o pídela al taller.'}, status=403)
     actual = request.data.get('password_actual') or ''
     nueva = request.data.get('password_nueva') or ''
     confirmar = request.data.get('confirmar_password')
@@ -2255,3 +2259,147 @@ def empresa_config(request):
         serializer.save(actualizado_por=request.user)
         return Response(serializer.data)
     return Response(serializer.errors, status=400)
+
+
+
+# ── Módulo del Coordinador: nueva solicitud con alta automática del cliente ───
+
+def _enviar_credenciales(usuario, password, es_restablecimiento=False):
+    """Manda por correo el usuario y la contraseña (solo si el cliente tiene un correo real)."""
+    from .servicios import DOMINIO_SIN_CORREO
+    if not usuario.email or usuario.email.endswith('@' + DOMINIO_SIN_CORREO):
+        return False
+    url = f'{settings.FRONTEND_URL}/login'
+    asunto = '🔑 Tu nueva contraseña de TallerDiesel' if es_restablecimiento else '🚛 Tu cuenta de TallerDiesel'
+    _enviar_html_en_segundo_plano(
+        asunto=asunto, destinatarios=[usuario.email],
+        html_body=email_credenciales(usuario.nombre_completo, usuario.username, password, url, es_restablecimiento),
+        text_body=f'Usuario: {usuario.username}\nContraseña: {password}\nEntra en {url}',
+    )
+    return True
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def coordinador_nueva_solicitud(request):
+    """El Coordinador (o el Administrador) registra una solicitud de servicio a nombre de un cliente.
+    - Si el cliente ya existe (se elige, o coincide su correo o teléfono) se usa ese.
+    - Si NO existe, se da de alta en ese momento con usuario y contraseña generados automáticamente;
+      se devuelven UNA vez para dárselos al cliente y, si tiene correo, también se le envían.
+    El ticket queda asignado al coordinador que lo registra (con su folio TD)."""
+    from .servicios import (generar_usuario, generar_password, buscar_cliente_existente, DOMINIO_SIN_CORREO)
+    if request.user.rol not in ('admin', 'coordinador'):
+        return Response({'error': 'Solo el taller puede registrar solicitudes a nombre de un cliente.'}, status=403)
+
+    d = request.data
+    datos_cliente = d.get('cliente') or {}
+    servicio = d.get('servicio') or {}
+    problema = (servicio.get('problema') or '').strip()
+    if not problema:
+        return Response({'error': 'Describe el problema de la unidad.'}, status=400)
+
+    cliente, cliente_nuevo, password = None, False, None
+    if d.get('cliente_id'):
+        cliente = User.objects.filter(pk=d.get('cliente_id'), rol='cliente').first()
+        if not cliente:
+            return Response({'error': 'El cliente elegido no existe.'}, status=400)
+    else:
+        nombre = (datos_cliente.get('nombre') or '').strip()
+        apellido = (datos_cliente.get('apellido_paterno') or '').strip()
+        telefono = (datos_cliente.get('telefono') or '').strip()
+        email = (datos_cliente.get('email') or '').strip()
+        if not nombre or not telefono:
+            return Response({'error': 'Escribe al menos el nombre y el teléfono del cliente.'}, status=400)
+        if email:
+            from django.core.validators import validate_email
+            from django.core.exceptions import ValidationError
+            try:
+                validate_email(email)
+            except ValidationError:
+                return Response({'error': 'El correo del cliente no es válido.'}, status=400)
+            if User.objects.filter(email__iexact=email).exclude(rol='cliente').exists():
+                return Response({'error': 'Ese correo ya pertenece a una cuenta del taller.'}, status=400)
+        cliente = buscar_cliente_existente(email, telefono)
+        if cliente is None:
+            username = generar_usuario(nombre, apellido)
+            password = generar_password()
+            with transaction.atomic():
+                cliente = User.objects.create_user(
+                    username, email or f'{username}@{DOMINIO_SIN_CORREO}', password,
+                    rol='cliente', nombre=nombre, apellido_paterno=apellido,
+                    apellido_materno=(datos_cliente.get('apellido_materno') or '').strip(),
+                    empresa=(datos_cliente.get('empresa') or '').strip(), telefono=telefono,
+                    email_verificado=True,   # lo da de alta el taller: no necesita verificar el correo
+                )
+            cliente_nuevo = True
+
+    with transaction.atomic():
+        solicitud = SolicitudServicio.objects.create(
+            nombre_completo=cliente.nombre_completo, telefono=cliente.telefono or '',
+            empresa=cliente.empresa or '', lugar=(servicio.get('lugar') or '').strip(),
+            tipo_unidad=(servicio.get('tipo_unidad') or '').strip(), unidad=(servicio.get('unidad') or '').strip(),
+            problema=problema, cliente=cliente, atendida=True,
+        )
+        ticket = Ticket.objects.create(
+            empresa=cliente.empresa or cliente.nombre_completo, fecha=date.today(), estatus='pendiente',
+            tipo_unidad=solicitud.tipo_unidad, unidad=solicitud.unidad or '—', lugar=solicitud.lugar,
+            operador=(servicio.get('operador') or '').strip() or cliente.nombre_completo,
+            reparacion=problema, cliente=cliente, tipo_solicitud='coordinador',
+            coordinador=request.user if request.user.rol == 'coordinador' else None,
+        )
+        solicitud.ticket = ticket
+        solicitud.save(update_fields=['ticket'])
+        ComentarioTicket.objects.create(
+            ticket=ticket, autor=request.user, autor_nombre=request.user.nombre_completo,
+            texto=f'Solicitud registrada por {request.user.nombre_completo} a nombre de {cliente.nombre_completo}.',
+        )
+    if ticket.coordinador_id:
+        ticket.asignar_folio()
+    else:
+        asignar_coordinador_automatico(ticket)
+    ticket.refresh_from_db()
+    Notificacion.objects.create(
+        destinatario=cliente, titulo=f'Tu servicio {ticket.etiqueta} fue registrado',
+        mensaje='El taller registró tu solicitud. Puedes seguirla y chatear desde tu Bitácora.',
+        tipo='comentario', referencia_id=ticket.id,
+    )
+    correo_enviado = _enviar_credenciales(cliente, password) if cliente_nuevo else False
+    return Response({
+        'ticket': TicketSerializer(ticket, context={'request': request}).data,
+        'cliente': {'id': cliente.id, 'nombre_completo': cliente.nombre_completo, 'username': cliente.username,
+                    'telefono': cliente.telefono, 'empresa': cliente.empresa},
+        'cliente_nuevo': cliente_nuevo,
+        'credenciales': {'usuario': cliente.username, 'password': password} if cliente_nuevo else None,
+        'correo_enviado': correo_enviado,
+    }, status=201)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def restablecer_password_usuario(request, pk):
+    """Respaldo de contraseñas: si un cliente olvida su contraseña, el taller le genera una NUEVA.
+    Por seguridad las contraseñas nunca se guardan legibles (ni el taller puede verlas); se crea una nueva,
+    se muestra UNA vez y, si el cliente tiene correo, también se le envía. Cierra sus sesiones abiertas.
+    Admin: cualquier cliente o coordinador. Coordinador: solo clientes."""
+    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
+    from .servicios import generar_password
+    objetivo = get_object_or_404(User, pk=pk)
+    if request.user.rol == 'admin':
+        if objetivo.rol == 'admin' and objetivo.pk != request.user.pk:
+            return Response({'error': 'No puedes restablecer la contraseña de otro administrador.'}, status=403)
+    elif request.user.rol == 'coordinador':
+        if objetivo.rol != 'cliente':
+            return Response({'error': 'Solo puedes restablecer contraseñas de clientes.'}, status=403)
+    else:
+        return Response({'error': 'No tienes permiso.'}, status=403)
+    password = generar_password()
+    objetivo.set_password(password)
+    objetivo.save(update_fields=['password'])
+    for tok in OutstandingToken.objects.filter(user=objetivo):
+        BlacklistedToken.objects.get_or_create(token=tok)
+    Notificacion.objects.create(
+        destinatario=objetivo, titulo='🔑 Se restableció tu contraseña',
+        mensaje=f'{request.user.nombre_completo} te generó una contraseña nueva.', tipo='cuenta',
+    )
+    correo_enviado = _enviar_credenciales(objetivo, password, es_restablecimiento=True)
+    return Response({'usuario': objetivo.username, 'password': password, 'correo_enviado': correo_enviado})

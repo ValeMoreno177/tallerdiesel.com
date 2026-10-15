@@ -20,9 +20,11 @@ const BitacoraPage = lazy(() => import("./pages/BitacoraPage"));
 const ClienteBitacoraPage = lazy(() => import("./pages/ClienteBitacoraPage"));
 const UsuariosPage = lazy(() => import("./pages/UsuariosPage"));
 const PerfilPage = lazy(() => import("./pages/PerfilPage"));
+const NuevaSolicitudPage = lazy(() => import("./pages/NuevaSolicitudPage"));
 import TourGuia from "./components/TourGuia";
 import SesionInactividad from "./components/SesionInactividad";
 import CalificacionGlobal from "./components/CalificacionGlobal";
+import InstalarApp from "./components/InstalarApp";
 import { NotificacionesProvider } from "./context/NotificacionesContext";
 import { PantallaCargando } from "./components/Esqueleto";
 
@@ -106,6 +108,14 @@ export default function App() {
             }
           />
           <Route
+            path="/cliente/perfil"
+            element={
+              <RutaProtegida roles={["cliente"]}>
+                <PerfilPage />
+              </RutaProtegida>
+            }
+          />
+          <Route
             path="/cliente/bitacora-tecnico"
             element={<Navigate to="/cliente/bitacora" replace />}
           />
@@ -180,6 +190,23 @@ export default function App() {
               </RutaProtegida>
             }
           />
+          {/* Nueva solicitud a nombre de un cliente (con alta automática del cliente) */}
+          <Route
+            path="/coordinador/nueva-solicitud"
+            element={
+              <RutaProtegida roles={["coordinador"]}>
+                <NuevaSolicitudPage />
+              </RutaProtegida>
+            }
+          />
+          <Route
+            path="/admin/nueva-solicitud"
+            element={
+              <RutaProtegida roles={["admin"]}>
+                <NuevaSolicitudPage />
+              </RutaProtegida>
+            }
+          />
           {/* Solicitar coordinador (si acaso lo necesita desde otro lado) */}
           <Route
             path="/solicitar-coordinador"
@@ -225,6 +252,7 @@ export default function App() {
         {/* Globales: cierre por inactividad (5 min) y ventana para calificar al terminar un servicio */}
         <SesionInactividad />
         <CalificacionGlobal />
+        <InstalarApp />
       </BrowserRouter>
       </NotificacionesProvider>
     </AuthProvider>

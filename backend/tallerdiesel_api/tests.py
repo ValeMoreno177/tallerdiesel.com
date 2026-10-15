@@ -1388,3 +1388,95 @@ class PapeleraMasivaYUsuariosTests(APITestCase):
         cli = User.objects.get(username='activo_pm')
         self.client.force_authenticate(cli)
         self.assertEqual(self.client.post('/api/tickets/mandar_a_papelera/', {'todos': True}, format='json').status_code, 403)
+
+
+class NuevaSolicitudCoordinadorTests(APITestCase):
+    """Módulo del coordinador: solicitud a nombre de un cliente, con alta automática si no existe."""
+
+    def setUp(self):
+        mk = lambda u, rol, **kw: User.objects.create_user(u, f'{u}@x.com', 'pass12345', rol=rol, nombre=u,
+                                                           email_verificado=True, **kw)
+        self.coord = mk('coord_ns', 'coordinador')
+        self.admin = mk('adm_ns', 'admin')
+        self.existente = mk('cli_ns', 'cliente', telefono='55 1234 5678', empresa='Fletes MX')
+
+    def _crear(self, quien, **cuerpo):
+        self.client.force_authenticate(quien)
+        base = {'servicio': {'problema': 'No arranca', 'unidad': 'Kenworth', 'lugar': 'CDMX'}}
+        base.update(cuerpo)
+        return self.client.post('/api/coordinador/nueva-solicitud/', base, format='json')
+
+    def test_alta_automatica_de_cliente_nuevo(self):
+        r = self._crear(self.coord, cliente={'nombre': 'José', 'apellido_paterno': 'Núñez', 'telefono': '8112223344',
+                                             'empresa': 'Transportes JN'})
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data['cliente_nuevo'])
+        cred = r.data['credenciales']
+        self.assertEqual(cred['usuario'], 'jnunez')
+        # Puede entrar con lo que se le dio
+        self.client.force_authenticate(None)
+        login = self.client.post('/api/auth/login/', {'username': cred['usuario'], 'password': cred['password']}, format='json')
+        self.assertEqual(login.status_code, 200, login.data)
+        t = Ticket.objects.get(pk=r.data['ticket']['id'])
+        self.assertEqual((t.coordinador, t.cliente.username), (self.coord, 'jnunez'))
+        self.assertRegex(t.ticket_id, r'^TD\d{3}$')
+
+    def test_si_el_cliente_existe_por_telefono_no_lo_duplica(self):
+        r = self._crear(self.coord, cliente={'nombre': 'Otro', 'telefono': '(55) 1234-5678'})
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertFalse(r.data['cliente_nuevo'])
+        self.assertIsNone(r.data['credenciales'])
+        self.assertEqual(r.data['cliente']['id'], self.existente.id)
+        self.assertEqual(User.objects.filter(rol='cliente').count(), 1)
+
+    def test_elegir_cliente_existente(self):
+        r = self._crear(self.coord, cliente_id=self.existente.id)
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(Ticket.objects.get(pk=r.data['ticket']['id']).cliente, self.existente)
+
+    def test_usuario_repetido_recibe_numero(self):
+        User.objects.create_user('jnunez', 'j@x.com', 'x', rol='cliente')
+        r = self._crear(self.coord, cliente={'nombre': 'Juan', 'apellido_paterno': 'Nuñez', 'telefono': '9990001111'})
+        self.assertEqual(r.data['credenciales']['usuario'], 'jnunez2')
+
+    def test_cliente_no_puede_usarlo(self):
+        r = self._crear(self.existente, cliente={'nombre': 'X', 'telefono': '1234567890'})
+        self.assertEqual(r.status_code, 403)
+
+    def test_restablecer_password(self):
+        self.client.force_authenticate(self.coord)
+        r = self.client.post(f'/api/usuarios/{self.existente.id}/restablecer-password/')
+        self.assertEqual(r.status_code, 200)
+        nueva = r.data['password']
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post('/api/auth/login/', {'username': 'cli_ns', 'password': nueva}, format='json').status_code, 200)
+        # El coordinador no restablece a otro coordinador ni al admin
+        self.client.force_authenticate(self.coord)
+        self.assertEqual(self.client.post(f'/api/usuarios/{self.admin.id}/restablecer-password/').status_code, 403)
+
+    def test_cliente_no_cambia_su_password_desde_perfil(self):
+        self.client.force_authenticate(self.existente)
+        r = self.client.post('/api/auth/cambiar-password/', {'password_actual': 'pass12345', 'password_nueva': 'Nueva12345',
+                                                              'confirmar_password': 'Nueva12345'}, format='json')
+        self.assertEqual(r.status_code, 403)
+
+
+class ReiniciarTicketsTests(APITestCase):
+    def test_borra_tickets_y_reinicia_folio(self):
+        from io import StringIO
+        from datetime import date
+        from django.core.management import call_command
+        coord = User.objects.create_user(username='coordr', email='coordr@x.com', password='x12345678', rol='coordinador')
+        cli = User.objects.create_user(username='clir', email='clir@x.com', password='x12345678', rol='cliente')
+        for _ in range(3):
+            Ticket.objects.create(coordinador=coord, cliente=cli, empresa='E', unidad='U1', fecha=date.today())
+        self.assertEqual(Ticket.objects.order_by('-id').first().ticket_id, 'TD003')
+        Notificacion.objects.create(destinatario=cli, titulo='a', mensaje='b', tipo='comentario')
+        Notificacion.objects.create(destinatario=cli, titulo='a', mensaje='b', tipo='cuenta')
+        call_command('reiniciar_tickets', stdout=StringIO())          # sin --confirmar no borra
+        self.assertEqual(Ticket.objects.count(), 3)
+        call_command('reiniciar_tickets', '--confirmar', stdout=StringIO())
+        self.assertEqual(Ticket.objects.count(), 0)
+        self.assertEqual(Notificacion.objects.count(), 1)
+        self.assertTrue(User.objects.filter(username='clir').exists())
+        self.assertEqual(Ticket.objects.create(coordinador=coord, cliente=cli, empresa='E', unidad='U1', fecha=date.today()).ticket_id, 'TD001')
