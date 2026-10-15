@@ -735,13 +735,6 @@ export default function BitacoraPage({ rol }) {
               <input className="form-input" type="date" value={fechaHasta} min={fechaDesde || undefined}
                 onChange={e => setFechaHasta(e.target.value)} />
             </label>
-            {[['Hoy', 0], ['7 días', 7], ['30 días', 30]].map(([l, d]) => (
-              <button key={l} type="button" className="btn btn-sm btn-ghost" onClick={() => {
-                const hoy = new Date(); const ini = new Date(); ini.setDate(hoy.getDate() - d)
-                const f = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`
-                setFechaDesde(f(ini)); setFechaHasta(f(hoy))
-              }}>{l}</button>
-            ))}
             {(estatusFiltro !== 'pendiente' || fechaDesde || fechaHasta) && (
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setEstatusFiltro('pendiente'); setFechaDesde(''); setFechaHasta('') }}>
                 ↺ Restablecer

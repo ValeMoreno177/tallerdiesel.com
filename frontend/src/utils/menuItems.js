@@ -7,6 +7,7 @@ export function getMenuItems(user) {
       { to: '/admin/nueva-solicitud', label: 'Nueva solicitud', icon: '➕' },
       { to: '/admin/usuarios', label: 'Usuarios', icon: '👥' },
       { to: '/mapa-tecnicos', label: 'Mapa de Técnicos', icon: '🗺️' },
+      { to: '/admin/perfil', label: 'Mi perfil', icon: '👤' },
     ]
 
   if (user?.rol === 'coordinador')

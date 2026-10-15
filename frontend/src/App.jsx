@@ -175,6 +175,14 @@ export default function App() {
             }
           />
           <Route
+            path="/admin/perfil"
+            element={
+              <RutaProtegida roles={["admin"]}>
+                <PerfilPage />
+              </RutaProtegida>
+            }
+          />
+          <Route
             path="/coordinador/perfil"
             element={
               <RutaProtegida roles={["coordinador"]}>

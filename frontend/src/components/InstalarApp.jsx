@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 
 // "Descargar la app" en computadora, tablet y teléfono.
 // TallerDiesel es una app web instalable (PWA): queda como ícono en el escritorio o en la pantalla de
@@ -16,15 +16,36 @@ if (typeof window !== 'undefined') {
     e.preventDefault()          // se guarda para lanzarlo cuando la persona toque "Descargar app"
     promptGuardado = e
   })
-  window.addEventListener('appinstalled', () => { promptGuardado = null })
+  window.addEventListener('appinstalled', () => {
+    promptGuardado = null
+    try { localStorage.setItem('td_app_instalada', '1') } catch { /* sin almacenamiento */ }
+    window.dispatchEvent(new Event('td:app-instalada'))
+  })
 }
 
 export function abrirInstalarApp() {
   window.dispatchEvent(new Event(EVENTO_ABRIR))
 }
 
+// La app está instalada si se abrió desde su ícono (pantalla completa) o si se instaló desde este navegador.
 export function yaInstalada() {
-  return window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true
+  if (typeof window === 'undefined') return false
+  const abiertaComoApp = ['standalone', 'fullscreen', 'minimal-ui'].some(m => window.matchMedia?.(`(display-mode: ${m})`).matches)
+    || window.navigator.standalone === true
+  if (abiertaComoApp) return true
+  try { return localStorage.getItem('td_app_instalada') === '1' } catch { return false }
+}
+
+function suscribirInstalada(cb) {
+  window.addEventListener('td:app-instalada', cb)
+  const mq = window.matchMedia?.('(display-mode: standalone)')
+  mq?.addEventListener?.('change', cb)
+  return () => { window.removeEventListener('td:app-instalada', cb); mq?.removeEventListener?.('change', cb) }
+}
+
+/** true cuando la app ya está instalada → se oculta el botón "Descargar app". */
+export function useAppInstalada() {
+  return useSyncExternalStore(suscribirInstalada, yaInstalada, () => false)
 }
 
 function detectarPlataforma() {

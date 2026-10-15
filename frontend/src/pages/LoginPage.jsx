@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import PasswordInput from '../components/PasswordInput'
 import { INACTIVIDAD_MS, CLAVE_SESION_EXPIRADA } from '../config/tiempos'
-import { abrirInstalarApp } from '../components/InstalarApp'
+import { abrirInstalarApp, useAppInstalada } from '../components/InstalarApp'
 
 const FEATURES_LEFT = [
   { icon: '🛡️', title: 'Tu unidad no puede esperar — nosotros tampoco', desc: 'Cada hora parada es dinero perdido. Por eso respondemos antes de que el café se enfríe.' },
@@ -17,6 +17,7 @@ const FEATURES_RIGHT = [
 ]
 
 export default function LoginPage() {
+  const appInstalada = useAppInstalada()
   const { login } = useAuth()
   const navigate = useNavigate()
   const [tab, setTab] = useState('login')
@@ -63,11 +64,11 @@ export default function LoginPage() {
           Taller<span style={{ color: 'var(--naranja)' }}>diesel</span>
           <span style={{ color: '#9ca3af', fontSize: '0.55rem', fontFamily: 'Barlow', letterSpacing: 3, marginLeft: 4 }}>.com</span>
         </div>
-        <button type="button" onClick={abrirInstalarApp}
+        {!appInstalada && <button type="button" onClick={abrirInstalarApp}
           style={{ marginLeft: 'auto', background: 'var(--naranja)', color: 'white', border: 0, borderRadius: 999,
             padding: '8px 16px', fontWeight: 600, cursor: 'pointer', fontSize: '0.88rem', whiteSpace: 'nowrap' }}>
           📲 Descargar app
-        </button>
+        </button>}
       </nav>
 
       <div className="login-grid" style={{ position: 'relative', zIndex: 1, flex: 1, display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '2rem', padding: '2.5rem 4rem', maxWidth: 1400, margin: '0 auto', width: '100%', alignItems: 'start' }}>

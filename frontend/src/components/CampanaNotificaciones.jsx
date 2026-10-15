@@ -19,6 +19,7 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
   const lista = vista === 'papelera' ? archivadas : notifs
   // Si la pantalla no trae su propio chat, la campana lo abre aquí mismo
   const [chatPropio, setChatPropio] = useState(null)
+  const esMovil = useEsMovil()
   const esDeChat = n => n.referencia_id && (n.tipo === 'comentario' || n.tipo === 'alerta_respuesta_sla')
 
   useEffect(() => {
@@ -96,8 +97,8 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
     setAbierto(!abierto)
   }
 
-  return (
-    <div style={{ position: 'relative' }} ref={ref}>
+  const contenido = (
+    <div className={`campana-wrap${esMovil ? ' campana-movil' : ''}`} style={{ position: 'relative' }} ref={ref}>
       {/* Botón campana */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <button
@@ -140,7 +141,7 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
 
       {/* Panel de notificaciones */}
       {abierto && (
-        <div style={{
+        <div className="campana-panel" style={{
           position: 'absolute', right: 0, top: '110%', width: 390,
           background: 'white', borderRadius: 12,
           boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
@@ -243,4 +244,19 @@ export default function CampanaNotificaciones({ onAbrirTicket, onAbrirChat }) {
       )}
     </div>
   )
+  // En teléfono y tablet la campana va ARRIBA, fija a la derecha (a la altura del botón ☰)
+  return esMovil ? createPortal(contenido, document.body) : contenido
+}
+
+const CONSULTA_MOVIL = '(max-width: 1024px)'
+function useEsMovil() {
+  const [movil, setMovil] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(CONSULTA_MOVIL).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(CONSULTA_MOVIL)
+    if (!mq) return undefined
+    const cambio = () => setMovil(mq.matches)
+    mq.addEventListener ? mq.addEventListener('change', cambio) : mq.addListener(cambio)
+    return () => { mq.removeEventListener ? mq.removeEventListener('change', cambio) : mq.removeListener(cambio) }
+  }, [])
+  return movil
 }

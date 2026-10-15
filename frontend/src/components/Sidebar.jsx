@@ -5,7 +5,7 @@ import { getMenuItems } from "../utils/menuItems";
 import Avatar from "./Avatar";
 import { aplicarTema } from "../utils/tema";
 import { avisosDisponibles, permisoAvisos, pedirPermisoAvisos } from "../utils/avisosSistema";
-import { abrirInstalarApp } from "./InstalarApp";
+import { abrirInstalarApp, useAppInstalada } from "./InstalarApp";
 
 const LOGO = () => (
   <div
@@ -42,6 +42,7 @@ export default function Sidebar() {
     setTema(nuevo);
   };
   const { user, logout, iniciarTour } = useAuth();
+  const appInstalada = useAppInstalada();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -140,9 +141,11 @@ export default function Sidebar() {
                 {tema === "oscuro" ? "☀️ Modo claro" : "🌙 Modo oscuro"}
               </button>
               <button role="menuitem" onClick={opcion(iniciarTour)}>❓ Ver tutorial</button>
-              <button role="menuitem" onClick={opcion(abrirInstalarApp)}>
-                📲 Descargar app
-              </button>
+              {!appInstalada && (
+                <button role="menuitem" onClick={opcion(abrirInstalarApp)}>
+                  📲 Descargar app
+                </button>
+              )}
               {avisosDisponibles() && permiso === "default" && (
                 <button role="menuitem" onClick={opcion(activarAvisos)}>🔔 Activar avisos</button>
               )}

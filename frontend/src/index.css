@@ -455,3 +455,28 @@ html[data-tema="oscuro"] .leaflet-popup-content [style*="color: rgb(17, 24, 39)"
 @media (max-width: 380px) {
   .stat-card { padding: 0.7rem 0.8rem; }
 }
+
+/* Notificaciones en teléfono y tablet: la campana va ARRIBA a la derecha (a la altura del ☰)
+   y el panel se abre debajo de ella, siempre dentro de la pantalla */
+@media (max-width: 1024px) {
+  .campana-wrap.campana-movil {
+    position: fixed !important;
+    top: calc(0.85rem + env(safe-area-inset-top, 0px));
+    right: calc(1rem + env(safe-area-inset-right, 0px));
+    z-index: 300;
+    background: #111827;
+    border-radius: 12px;
+    padding: 1px 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  }
+  .campana-panel {
+    position: fixed !important;
+    top: calc(4.25rem + env(safe-area-inset-top, 0px)) !important;
+    right: calc(12px + env(safe-area-inset-right, 0px)) !important;
+    left: auto !important;
+    width: min(400px, calc(100vw - 24px)) !important;
+    max-height: calc(100dvh - 5.5rem);
+    overflow-y: auto !important;
+    z-index: 3000 !important;
+  }
+}

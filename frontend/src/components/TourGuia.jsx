@@ -17,6 +17,7 @@ const TEXTOS = {
   '/coordinador/usuarios': 'Administra las cuentas del sistema: clientes y coordinadores.',
   '/mapa-tecnicos': 'Mapa con los técnicos disponibles por zona, con su disponibilidad y calificaciones.',
   '/coordinador/perfil': 'Tu perfil: sube o cambia tu foto y actualiza tu contraseña.',
+  '/admin/perfil': 'Tu perfil: sube o cambia tu foto y actualiza tu contraseña.',
   '/cliente/perfil': 'Tu perfil: tus datos y tu foto.',
   '/coordinador/nueva-solicitud': 'Registra un servicio a nombre de un cliente. Si no existe, el sistema lo da de alta con usuario y contraseña.',
   '/admin/nueva-solicitud': 'Registra un servicio a nombre de un cliente. Si no existe, el sistema lo da de alta con usuario y contraseña.',
