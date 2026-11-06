@@ -137,10 +137,17 @@ function ModalUsuario({ usuario, onClose, onSaved, viewerEsAdmin }) {
 
 function ModalDesactivar({ usuario, onClose, onSaved }) {
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const handleDesactivar = async () => {
-    setLoading(true)
-    await api.patch(`/usuarios/${usuario.id}/`, { is_active: !usuario.is_active })
-    onSaved(); onClose()
+    setLoading(true); setError('')
+    try {
+      await api.patch(`/usuarios/${usuario.id}/`, { is_active: !usuario.is_active })
+      onSaved(); onClose()
+    } catch (err) {
+      const d = err.response?.data
+      setError((Array.isArray(d?.email) ? d.email[0] : d?.email) || d?.error || 'No se pudo cambiar el estatus.')
+      setLoading(false)
+    }
   }
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -148,8 +155,10 @@ function ModalDesactivar({ usuario, onClose, onSaved }) {
         <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>🔒</div>
         <h3 className="modal-title">{usuario.is_active ? '¿Desactivar Usuario?' : '¿Activar Usuario?'}</h3>
         <p style={{ color: '#6b7280', margin: '0.5rem 0 1.5rem', fontSize: '0.875rem' }}>
-          El usuario <strong>{usuario.username}</strong> {usuario.is_active ? 'no podrá iniciar sesión mientras esté inactivo.' : 'podrá volver a iniciar sesión.'}
+          El usuario <strong>{usuario.username}</strong> {usuario.is_active ? 'no podrá iniciar sesión mientras esté inactivo. Su correo quedará libre para usarlo en otra cuenta.' : 'podrá volver a iniciar sesión.'}
         </p>
+        {error && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '8px 12px',
+                                borderRadius: 8, fontSize: '0.82rem', marginBottom: '1rem' }}>{error}</div>}
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
           <button className={`btn ${usuario.is_active ? 'btn-danger' : 'btn-primary'}`} onClick={handleDesactivar} disabled={loading}>
@@ -176,6 +185,174 @@ function ModalRestablecer({ usuario, onClose }) {
     }
   }
   const texto = datos ? `Hola ${usuario.nombre_completo || usuario.username}, tu nueva contraseña de TallerDiesel:\n`
+    + `Entra en ${window.location.origin}/login\nUsuario: ${datos.usuario}\nContraseña: ${datos.password}` : ''
+  const tel = (usuario.telefono || '').replace(/\D/g, '')
+  const whatsapp = datos && tel ? `https://wa.me/${tel.length === 10 ? '52' + tel : tel}?text=${encodeURIComponent(texto)}` : null
+  const copiar = () => {
+    const ok = () => setCopiado(true)
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(texto).then(ok).catch(() => {})
+    else { const t = document.createElement('textarea'); t.value = texto; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); ok() } catch { /* */ } t.remove() }
+  }
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: '2.5rem', textAlign: 'center' }}>🔑</div>
+        <h3 className="modal-title" style={{ textAlign: 'center' }}>Restablecer contraseña</h3>
+        {estado !== 'listo' ? (
+          <>
+            <p style={{ color: '#6b7280', fontSize: '0.875rem', textAlign: 'center', margin: '0.5rem 0 1.25rem' }}>
+              Se generará una contraseña nueva para <strong>{usuario.username}</strong>. La anterior dejará de funcionar
+              y se cerrarán sus sesiones abiertas.
+            </p>
+            {error && <div role="alert" style={{ background: '#fef2f2', color: '#991b1b', padding: '8px 12px', borderRadius: 8, fontSize: '0.85rem', marginBottom: 12 }}>{error}</div>}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+              <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+              <button className="btn btn-primary" onClick={restablecer} disabled={estado === 'cargando'}>
+                {estado === 'cargando' ? 'Generando…' : 'Generar nueva contraseña'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ background: '#111827', color: 'white', borderRadius: 12, padding: '1rem', marginTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0' }}>
+                <span>Usuario</span><code style={{ color: '#fdba74', fontWeight: 700 }}>{datos.usuario}</code></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0' }}>
+                <span>Contraseña</span><code style={{ color: '#fdba74', fontWeight: 700, fontSize: '1.15rem', letterSpacing: 1 }}>{datos.password}</code></div>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: '#6b7280', margin: '10px 0' }}>
+              Dásela ahora: por seguridad no se vuelve a mostrar{datos.correo_enviado ? ' (también se envió a su correo).' : '.'}
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={copiar}>{copiado ? '✓ Copiado' : '📋 Copiar'}</button>
+              {whatsapp && <a className="btn" href={whatsapp} target="_blank" rel="noreferrer" style={{ background: '#059669', color: 'white', textDecoration: 'none' }}>💬 WhatsApp</a>}
+              <button className="btn btn-primary" onClick={onClose}>Listo</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Reparto de servicios: el Administrador puede mandar TODOS los servicios nuevos a un solo coordinador.
+function RepartoServicios() {
+  const [cfg, setCfg] = useState(null)
+  const [guardando, setGuardando] = useState(false)
+  const [mensaje, setMensaje] = useState('')
+
+  useEffect(() => { api.get('/empresa-config/').then(({ data }) => setCfg(data)).catch(() => {}) }, [])
+  if (!cfg || !Array.isArray(cfg.coordinadores)) return null
+
+  const cambiar = async (e) => {
+    const valor = e.target.value ? Number(e.target.value) : null
+    setGuardando(true); setMensaje('')
+    try {
+      const { data } = await api.patch('/empresa-config/', { coordinador_fijo: valor })
+      setCfg(data)
+      setMensaje(valor ? '✓ Listo: los servicios nuevos y los que estaban en espera le llegan a este coordinador.'
+                       : '✓ Listo: los servicios se reparten otra vez entre todos los coordinadores.')
+    } catch (err) {
+      setMensaje(err.response?.data?.coordinador_fijo?.[0] || err.response?.data?.error || 'No se pudo guardar.')
+    } finally { setGuardando(false) }
+  }
+
+  return (
+    <div className="card" style={{ padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap',
+                                   alignItems: 'center', gap: '0.75rem' }}>
+      <div style={{ flex: '1 1 260px' }}>
+        <div style={{ fontWeight: 700 }}>📥 ¿A quién le llegan los servicios nuevos?</div>
+        <div style={{ color: '#6b7280', fontSize: '0.82rem' }}>
+          Si eliges un coordinador, todos los servicios nuevos y los que estén en espera le llegan directo a él.
+        </div>
+        {mensaje && <div style={{ fontSize: '0.82rem', marginTop: 4, color: mensaje.startsWith('✓') ? '#065f46' : '#991b1b' }}>{mensaje}</div>}
+      </div>
+      <select className="form-select" style={{ flex: '1 1 260px' }} disabled={guardando}
+              value={cfg.coordinador_fijo ?? ''} onChange={cambiar}>
+        <option value="">Repartir entre todos (por turno)</option>
+        {cfg.coordinadores.map(c => (
+          <option key={c.id} value={c.id}>Todos a {c.numero ? `Coordinador ${c.numero} — ` : ''}{c.nombre}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+export default function UsuariosPage() {
+  const { user: viewer } = useAuth()
+  const viewerEsAdmin = viewer?.rol === 'admin'
+  const [usuarios, setUsuarios] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filtroRol, setFiltroRol] = useState('')
+  const [busqueda, setBusqueda] = useState('')
+  const [modal, setModal] = useState(null)
+  const [selected, setSelected] = useState(null)
+
+  const fetchUsers = () => {
+    setLoading(true)
+    api.get('/usuarios/').then(({ data }) => setUsuarios(data.results || data)).finally(() => setLoading(false))
+  }
+
+  useEffect(() => { fetchUsers() }, [])
+  // Actualización automática (sin spinner): altas, bajas y cambios de otros administradores
+  useAutoRefresh(() => api.get('/usuarios/').then(({ data }) => setUsuarios(data.results || data)), { soloVisible: true })
+
+  const filtrados = usuarios.filter(u => {
+    const matchRol = !filtroRol || u.rol === filtroRol
+    const matchBusq = !busqueda ||
+      u.username?.toLowerCase().includes(busqueda.toLowerCase()) ||
+      u.email?.toLowerCase().includes(busqueda.toLowerCase()) ||
+      u.nombre?.toLowerCase().includes(busqueda.toLowerCase())
+    return matchRol && matchBusq
+  })
+    // Activos arriba, inactivos hasta abajo (dentro de cada grupo se respeta el orden de registro)
+    .sort((a, b) => Number(b.is_active) - Number(a.is_active))
+
+  const contar = rol => usuarios.filter(u => u.rol === rol).length
+  const inactivos = usuarios.filter(u => !u.is_active).length
+
+  const resumen = [
+    { label: 'Administradores', count: contar('admin'), bg: '#fef2f2', color: '#991b1b', icon: '🛡️' },
+    { label: 'Coordinadores', count: contar('coordinador'), bg: '#eff6ff', color: '#1e40af', icon: '👔' },
+    { label: 'Clientes', count: contar('cliente'), bg: '#f0fdf4', color: '#065f46', icon: '🏢' },
+    { label: 'Inactivos', count: inactivos, bg: '#f9fafb', color: '#6b7280', icon: '🔒' },
+  ]
+
+  return (
+    <div className="dashboard-layout">
+      <Sidebar />
+      <main className="main-content">
+        <EncabezadoPagina titulo="Gestión de Usuarios" subtitulo={`${usuarios.length} usuarios`} decoracion={<CamionTitulo />}>
+          <button className="btn btn-primary" onClick={() => setModal('nuevo')}>+ Nuevo usuario</button>
+        </EncabezadoPagina>
+
+        <div className="grid-stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '1.5rem' }}>
+          {resumen.map((r, i) => (
+            <div key={i} className="stat-card" style={{ background: r.bg }}>
+              <span style={{ fontSize: '1.5rem' }}>{r.icon}</span>
+              <span className="stat-num" style={{ color: r.color }}>{r.count}</span>
+              <span className="stat-label" style={{ color: r.color }}>{r.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {viewerEsAdmin && <RepartoServicios />}
+
+        <div className="card" style={{ padding: 0 }}>
+          <div style={{ padding: '1rem 1.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>
+            <input className="form-input" placeholder="Buscar por nombre, usuario, correo..."
+              value={busqueda} onChange={e => setBusqueda(e.target.value)} style={{ flex: 1 }} />
+            <select className="form-select" value={filtroRol} onChange={e => setFiltroRol(e.target.value)}>
+              <option value="">Todos los roles</option>
+              {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
+            </select>
+          </div>
+          {loading ? <EsqueletoTabla filas={5} columnas={6} /> : (
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Usuario</th><th>Nombre completo</th><th>Correo</th><th>Rol</th><th>Empresa</th><th>Estatus</th><th>Acciones</th></tr></thead>
+                <tbody>
+      esel:\n`
     + `Entra en ${window.location.origin}/login\nUsuario: ${datos.usuario}\nContraseña: ${datos.password}` : ''
   const tel = (usuario.telefono || '').replace(/\D/g, '')
   const whatsapp = datos && tel ? `https://wa.me/${tel.length === 10 ? '52' + tel : tel}?text=${encodeURIComponent(texto)}` : null
