@@ -172,6 +172,9 @@ def _usuario_por_correo(email, username=None, **filtros):
     if username:
         qs = qs.filter(username=str(username).strip())
     candidatos = list(qs[:2])
+    if len(candidatos) > 1:
+        # Un correo puede estar en una cuenta desactivada y en una nueva: cuenta la activa.
+        candidatos = list(qs.filter(is_active=True)[:2])
     if len(candidatos) == 1:
         return candidatos[0], False
     return None, len(candidatos) > 1
@@ -239,6 +242,206 @@ class SoloAdmin(BasePermission):
 
 class LecturaPublicaEdicionConPermiso(BasePermission):
     """Catálogos (técnicos, operadores): lectura pública, escritura solo
+    para Administrador o Coordinador con permiso de edición otorgado."""
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        if not (request.user and request.user.is_authenticated):
+            return False
+        return request.user.rol == 'admin' or (
+            request.user.rol == 'coordinador' and request.user.puede_editar_sistema)
+
+
+class PuedeEditarTicket(BasePermission):
+    """El ticket es visible para Cliente, Coordinador y Administrador, pero SOLO el coordinador asignado
+    puede editarlo (datos, técnico, solicitar finalización, eliminarlo). Los demás roles lo ven en modo
+    lectura; el Administrador conserva las acciones de administración (asignar coordinador, permitir edición
+    de un ticket cerrado, papelera). Si un ticket aún no tiene coordinador, el primer coordinador que lo
+    atiende se queda con él.
+    El Cliente nunca crea ni edita tickets (se generan al solicitar un servicio); sí puede comentarlos,
+    elegir técnico en su servicio directo, confirmar la finalización y calificar."""
+
+    # Acciones de EDICIÓN: requieren ser el coordinador asignado (o tomar el ticket si está libre)
+    ACCIONES_EDICION = ('update', 'partial_update', 'destroy', 'asignar_tecnico', 'solicitar_finalizacion', 'subir_evidencia')
+    # Acciones de ADMINISTRACIÓN que sigue haciendo el Administrador
+    ACCIONES_ADMIN = ('destroy', 'restaurar', 'tomar_como_coordinador', 'permitir_edicion_coordinador')
+    message = 'Solo el coordinador asignado puede editar este ticket.'
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        if view.action == 'create':
+            return request.user.rol in ('admin', 'coordinador')
+        return True  # objeto se valida en has_object_permission
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in SAFE_METHODS:
+            return obj.cliente_id == request.user.id or request.user.rol in ('admin', 'coordinador')
+        rol = request.user.rol
+        # Adjuntar evidencia al chat no modifica los datos del ticket: cualquier miembro
+        # del equipo que puede consultar el servicio puede aportar archivos.
+        if rol in ('admin', 'coordinador') and view.action == 'subir_evidencia':
+            return True
+        if rol == 'admin':
+            if view.action in self.ACCIONES_EDICION:
+                return puede_gestionar_ticket(request.user, obj) or view.action in self.ACCIONES_ADMIN
+            return True
+        if rol == 'coordinador':
+            if view.action in self.ACCIONES_EDICION:
+                if view.action == 'destroy':        # un ticket libre solo lo elimina el Administrador
+                    return obj.coordinador_id == request.user.id
+                return puede_gestionar_ticket(request.user, obj)
+            if view.action in ('permitir_edicion_coordinador',):
+                return False
+            return True
+        if obj.cliente_id != request.user.id:
+            return False
+        # Cliente: solo su propio ticket
+        if view.action in ('agregar_comentario', 'editar_comentario', 'subir_evidencia', 'escribiendo'):
+            return True  # los comentarios nunca se bloquean, ni con el servicio finalizado
+        if view.action == 'marcar_mensajes_leidos':
+            return True
+        if view.action == 'ubicacion':
+            return True   # la vista revisa que el servicio siga abierto
+        if view.action in ('update', 'partial_update'):
+            return False   # el cliente no edita el ticket (el lápiz es solo de Administrador y Coordinador)
+        if view.action in ('asignar_tecnico', 'responder_finalizacion'):
+            return obj.estatus != 'terminado'
+        if view.action == 'calificar':
+            return obj.estatus == 'terminado'
+        return False
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([LoginRateThrottle])
+def login_view(request):
+    username = request.data.get('username')
+    password = request.data.get('password')
+    try:
+        user = User.objects.get(username=username)
+        if not user.is_active:
+            return Response({'error': 'Usuario inactivo.'}, status=400)
+        if not user.check_password(password):
+            raise Exception()
+        if not user.email_verificado and user.rol != 'coordinador':
+            return Response({'error': 'Debes verificar tu correo electrónico antes de iniciar sesión.', 'no_verificado': True}, status=403)
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': UsuarioSerializer(user).data,
+        })
+    except Exception:
+        return Response({'error': 'Credenciales incorrectas.'}, status=400)
+
+
+@api_view(['POST'])
+def logout_view(request):
+    """Invalida el refresh token en el servidor (no solo en el navegador),
+    para que un token robado o copiado deje de servir de inmediato."""
+    try:
+        refresh_token = request.data.get('refresh')
+        if refresh_token:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+    except Exception:
+        pass  # si el token ya era inválido o expiró, no pasa nada
+    return Response({'mensaje': 'Sesión cerrada.'})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def registro_view(request):
+    serializer = RegistroSerializer(data=request.data)
+    if serializer.is_valid():
+        user = serializer.save()
+        # Crear token de verificación y generar código de 6 dígitos
+        token_obj = TokenVerificacion.objects.create(usuario=user)
+        codigo = token_obj.generar_codigo()
+        token_obj.save(update_fields=['codigo', 'intentos'])
+        # Siempre imprimir en consola para desarrollo/debug
+        print(f'\n🔑 CÓDIGO DE VERIFICACIÓN para {user.email}: {codigo}\n')
+        correo_enviado = False
+        try:
+            correo_enviado = enviar_html(
+                asunto='TallerDiesel — Código de verificación',
+                destinatarios=[user.email],
+                html_body=email_codigo_verificacion(user.nombre or user.username, codigo, MINUTOS_VALIDEZ_CODIGO),
+                text_body=(f'Hola {user.nombre or user.username},\n\n'
+                           f'Tu código de verificación es:\n\n{codigo}\n\n'
+                           f'Este código es válido por {MINUTOS_VALIDEZ_CODIGO} minutos.\n\n'
+                           f'Ingresa este código en la página de verificación para activar tu cuenta.\n\n'
+                           f'Si no creaste esta cuenta, ignora este correo.'),
+                fail_silently=False,
+            )
+        except Exception as e:
+            print(f'⚠️  Error enviando correo: {e}')
+        return Response({
+            'mensaje': f'Registro exitoso. {"Revisa tu correo " + user.email + " y escribe el código de verificación." if correo_enviado else "No se pudo enviar el correo. Usa el código que aparece en la terminal del servidor."}',
+            'email': user.email,
+            'codigo': codigo if not correo_enviado else None,
+        }, status=201)
+    return Response(serializer.errors, status=400)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([CodigoRateThrottle])
+def verificar_email(request):
+    email = (request.data.get('email') or '').strip().lower()
+    codigo = (request.data.get('codigo') or '').strip()
+    if not email or not codigo:
+        return Response({'error': 'Correo y código son requeridos.'}, status=400)
+    user, ambiguo = _usuario_por_correo(email, request.data.get('username'), email_verificado=False)
+    if ambiguo:
+        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
+    try:
+        if not user:
+            raise User.DoesNotExist
+        token_obj = TokenVerificacion.objects.get(usuario=user)
+
+        if timezone.now() - token_obj.creado_en > timedelta(minutes=MINUTOS_VALIDEZ_CODIGO):
+            token_obj.delete()
+            return Response({'error': 'El código expiró. Solicita uno nuevo.', 'expirado': True}, status=400)
+
+        if token_obj.intentos >= MAX_INTENTOS_CODIGO:
+            token_obj.delete()
+            return Response({'error': 'Demasiados intentos fallidos. Solicita un nuevo código.', 'expirado': True}, status=400)
+
+        if token_obj.codigo != codigo:
+            token_obj.intentos += 1
+            token_obj.save(update_fields=['intentos'])
+            restantes = MAX_INTENTOS_CODIGO - token_obj.intentos
+            return Response({'error': f'Código incorrecto. Te quedan {restantes} intento(s).'}, status=400)
+
+        user.email_verificado = True
+        user.save(update_fields=['email_verificado'])
+        token_obj.delete()
+        return Response({'mensaje': 'Correo verificado correctamente. Ya puedes iniciar sesión.'})
+    except (User.DoesNotExist, TokenVerificacion.DoesNotExist):
+        return Response({'error': 'Código inválido o ya utilizado.'}, status=400)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([CodigoRateThrottle])
+def reenviar_verificacion(request):
+    email = request.data.get('email')
+    user, ambiguo = _usuario_por_correo(email, request.data.get('username'), email_verificado=False)
+    if ambiguo:
+        return Response({'error': MSG_CORREO_COMPARTIDO, 'requiere_usuario': True}, status=400)
+    try:
+        if not user:
+            raise User.DoesNotExist
+        token_obj, _ = TokenVerificacion.objects.get_or_create(usuario=user)
+        codigo = token_obj.generar_codigo()
+      adores): lectura pública, escritura solo
     para Administrador o Coordinador con permiso de edición otorgado."""
 
     def has_permission(self, request, view):
