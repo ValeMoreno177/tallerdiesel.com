@@ -129,6 +129,10 @@ class ConfiguracionEmpresa(models.Model):
     actualizado_por= models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True)
     # Número del último coordinador que recibió un ticket por turno (el siguiente es el que sigue).
     ultimo_turno   = models.PositiveIntegerField(default=0)
+    # Si se elige, TODOS los servicios nuevos le llegan directo a este coordinador (ya no se reparten por turno).
+    # Vacío = reparto normal. Si deja de estar activo o deja de ser coordinador, se vuelve al reparto normal.
+    coordinador_fijo = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True,
+                                         related_name='+', limit_choices_to={'rol': 'coordinador'})
 
     class Meta:
         verbose_name = 'Configuración de la empresa'
