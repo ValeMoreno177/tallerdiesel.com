@@ -203,8 +203,7 @@ def aplicar_cambio_de_rol(usuario, rol_anterior):
         usuario.save(update_fields=['puede_editar_sistema'])
 
     if rol_anterior == 'coordinador' and usuario.rol != 'coordinador':
-        pendientes = list(Ticket.objects.filter(coordinador
-                                                =usuario, eliminado=False).exclude(estatus='terminado'))
+        pendientes = list(Ticket.objects.filter(coordinador=usuario, eliminado=False).exclude(estatus='terminado'))
         for t in pendientes:
             Ticket.objects.filter(pk=t.pk).update(coordinador=None)
             _comentario_sistema(t, None, f'{usuario.nombre_completo} dejó de ser coordinador: el ticket quedó sin coordinador.')
@@ -298,3 +297,4 @@ def buscar_cliente_existente(email='', telefono=''):
             if solo_digitos(u.telefono)[-10:] == tel:
                 return u
     return None
+    
