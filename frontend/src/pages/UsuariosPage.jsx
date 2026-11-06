@@ -226,6 +226,49 @@ function ModalRestablecer({ usuario, onClose }) {
   )
 }
 
+// Reparto de servicios: el Administrador puede mandar TODOS los servicios nuevos a un solo coordinador.
+function RepartoServicios() {
+  const [cfg, setCfg] = useState(null)
+  const [guardando, setGuardando] = useState(false)
+  const [mensaje, setMensaje] = useState('')
+
+  useEffect(() => { api.get('/empresa-config/').then(({ data }) => setCfg(data)).catch(() => {}) }, [])
+  if (!cfg || !Array.isArray(cfg.coordinadores)) return null
+
+  const cambiar = async (e) => {
+    const valor = e.target.value ? Number(e.target.value) : null
+    setGuardando(true); setMensaje('')
+    try {
+      const { data } = await api.patch('/empresa-config/', { coordinador_fijo: valor })
+      setCfg(data)
+      setMensaje(valor ? '✓ Listo: los servicios nuevos y los que estaban en espera le llegan a este coordinador.'
+                       : '✓ Listo: los servicios se reparten otra vez entre todos los coordinadores.')
+    } catch (err) {
+      setMensaje(err.response?.data?.coordinador_fijo?.[0] || err.response?.data?.error || 'No se pudo guardar.')
+    } finally { setGuardando(false) }
+  }
+
+  return (
+    <div className="card" style={{ padding: '1rem 1.25rem', marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap',
+                                   alignItems: 'center', gap: '0.75rem' }}>
+      <div style={{ flex: '1 1 260px' }}>
+        <div style={{ fontWeight: 700 }}>📥 ¿A quién le llegan los servicios nuevos?</div>
+        <div style={{ color: '#6b7280', fontSize: '0.82rem' }}>
+          Si eliges un coordinador, todos los servicios nuevos y los que estén en espera le llegan directo a él.
+        </div>
+        {mensaje && <div style={{ fontSize: '0.82rem', marginTop: 4, color: mensaje.startsWith('✓') ? '#065f46' : '#991b1b' }}>{mensaje}</div>}
+      </div>
+      <select className="form-select" style={{ flex: '1 1 260px' }} disabled={guardando}
+              value={cfg.coordinador_fijo ?? ''} onChange={cambiar}>
+        <option value="">Repartir entre todos (por turno)</option>
+        {cfg.coordinadores.map(c => (
+          <option key={c.id} value={c.id}>Todos a {c.numero ? `Coordinador ${c.numero} — ` : ''}{c.nombre}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 export default function UsuariosPage() {
   const { user: viewer } = useAuth()
   const viewerEsAdmin = viewer?.rol === 'admin'
@@ -283,6 +326,8 @@ export default function UsuariosPage() {
             </div>
           ))}
         </div>
+
+        {viewerEsAdmin && <RepartoServicios />}
 
         <div className="card" style={{ padding: 0 }}>
           <div style={{ padding: '1rem 1.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem', borderBottom: '1px solid #f3f4f6' }}>
