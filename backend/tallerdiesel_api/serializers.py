@@ -135,8 +135,13 @@ class ConfiguracionEmpresaSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConfiguracionEmpresa
         fields = ['id', 'nombre_empresa', 'rfc', 'direccion', 'telefono',
-                  'email', 'sitio_web', 'actualizado_en']
+                  'email', 'sitio_web', 'coordinador_fijo', 'actualizado_en']
         read_only_fields = ['id', 'actualizado_en']
+
+    def validate_coordinador_fijo(self, value):
+        if value is not None and (value.rol != 'coordinador' or not value.is_active):
+            raise serializers.ValidationError('Elige un coordinador activo.')
+        return value
 
 
 class OperadorSerializer(serializers.ModelSerializer):
