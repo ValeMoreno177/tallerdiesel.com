@@ -49,16 +49,22 @@ class UsuarioSerializer(serializers.ModelSerializer):
         inst = self.instance
         email = (data.get('email', inst.email if inst else '') or '').strip()
         rol = data.get('rol', inst.rol if inst else 'cliente')
-        if not email:
+        activo = data.get('is_active', inst.is_active if inst else True)
+        if not email or not activo:
+            return data               # una cuenta desactivada no ocupa su correo
+        reactivando = bool(inst and not inst.is_active and activo)
+        # Sin cambios de correo, rol ni reactivación (p. ej. solo se edita el nombre) no hay nada que revisar
+        if inst and email.lower() == inst.email.lower() and rol == inst.rol and not reactivando:
             return data
-        # Sin cambios de correo ni de rol (p. ej. solo se edita el nombre) no hay nada que revisar
-        if inst and email.lower() == inst.email.lower() and rol == inst.rol:
-            return data
-        otros = User.objects.filter(email__iexact=email)
+        # Solo cuentan las cuentas ACTIVAS: el correo de una cuenta desactivada se puede volver a usar.
+        otros = User.objects.filter(email__iexact=email, is_active=True)
         if inst:
             otros = otros.exclude(pk=inst.pk)
         if not otros.exists():
             return data
+        if reactivando and not (rol == 'coordinador' and not otros.exclude(rol='coordinador').exists()):
+            raise serializers.ValidationError(
+                {'email': 'No se puede reactivar: su correo ya lo usa otra cuenta activa. Cámbiale el correo primero.'})
         todos_coordinadores = not otros.exclude(rol='coordinador').exists()
         viewer = getattr(self.context.get('request'), 'user', None)
         if rol == 'coordinador' and todos_coordinadores:
@@ -107,7 +113,7 @@ class RegistroSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         # El registro público nunca comparte correo: solo el Administrador puede (entre coordinadores).
-        if User.objects.filter(email__iexact=value.strip()).exists():
+        if User.objects.filter(email__iexact=value.strip(), is_active=True).exists():
             raise serializers.ValidationError('Ya existe una cuenta con este correo.')
         return value
 
@@ -337,3 +343,4 @@ class NotificacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notificacion
         fields = '__all__'
+      
