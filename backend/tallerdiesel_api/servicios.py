@@ -94,6 +94,9 @@ def asignar_siguiente_en_espera(coordinador):
     que sigue pendiente y sin coordinador. Devuelve el ticket asignado o None."""
     if not coordinador or coordinador.rol != 'coordinador' or not coordinador.is_active:
         return None
+    fijo = coordinador_fijo_vigente()
+    if fijo and fijo.pk != coordinador.pk:
+        return None                            # todo lo atiende el coordinador fijo; los demás no reciben de la espera
     en_espera = Ticket.objects.filter(
         eliminado=False, coordinador__isnull=True, estatus='pendiente', tipo_solicitud='coordinador',
     ).order_by('fecha_creacion', 'id')
@@ -113,10 +116,44 @@ def asignar_siguiente_en_espera(coordinador):
 
 # ── Reparto automático de tickets nuevos entre coordinadores ──────────────────
 
+def coordinador_fijo_vigente(cfg=None):
+    """El coordinador al que el Administrador mandó TODOS los servicios, si sigue activo y siendo coordinador."""
+    cfg = cfg or ConfiguracionEmpresa.obtener()
+    c = cfg.coordinador_fijo if cfg.coordinador_fijo_id else None
+    if c and c.is_active and c.rol == 'coordinador':
+        return c
+    return None
+
+
+def asignar_en_espera_al_fijo():
+    """Al elegir un coordinador fijo, los tickets que estaban en espera (sin coordinador) también pasan a él."""
+    fijo = coordinador_fijo_vigente()
+    if not fijo:
+        return 0
+    asignados = 0
+    en_espera = Ticket.objects.filter(eliminado=False, coordinador__isnull=True, tipo_solicitud='coordinador',
+                                      ).exclude(estatus='terminado').order_by('fecha_creacion', 'id')
+    for t in en_espera:
+        if reclamar_ticket(t, fijo, motivo=f'Ticket asignado a {fijo.nombre_completo}: el Administrador '
+                                           'configuró que todos los servicios le lleguen a este coordinador.'):
+            asignados += 1
+    if asignados:
+        Notificacion.objects.create(
+            destinatario=fijo, titulo=f'📥 Se te asignaron {asignados} ticket(s) en espera',
+            mensaje='El Administrador configuró que todos los servicios te lleguen a ti.',
+            tipo='ticket_asignado', referencia_id=None,
+        )
+    return asignados
+
+
 def _elegir_coordinador(cfg):
     """Quién recibe el ticket nuevo (llamar con la configuración bloqueada):
+    0) Si el Administrador eligió un coordinador fijo (Configuración), siempre él.
     1) Si algún coordinador ya finalizó un servicio y sigue libre, el que lleva MÁS tiempo libre.
     2) Si no, por turno: el siguiente número después del último que recibió (1, 2, 3… y vuelve al 1)."""
+    fijo = coordinador_fijo_vigente(cfg)
+    if fijo:
+        return fijo
     activos = list(Usuario.objects.filter(rol='coordinador', is_active=True).order_by('numero_coordinador', 'id'))
     if not activos:
         return None
