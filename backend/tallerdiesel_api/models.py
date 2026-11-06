@@ -377,7 +377,39 @@ class Tecnico(models.Model):
         ('frenos_suspension','Frenos y suspensión'),('transmision','Transmisión'),
         ('hidraulico','Sistema hidráulico'),('aire','Sistema de aire'),
         ('mecanica','Mecánica general'),('soldadura','Soldadura'),
+        ('talachera','Talachera'),('llantas','Llantas'),('gruas','Grúas'),
+        ('refaccionaria','Refaccionaria'),('muelles','Muelles'),
+        ('carroceria','Carrocería'),('muelles_carroceria','Muelles y carrocería'),
     ]
+    # Otras formas en que suelen escribirse las categorías en el Excel (ya sin acentos y en minúsculas).
+    CATEGORIA_ALIAS = {
+        'mecanica general': 'mecanica', 'mecanico': 'mecanica',
+        'motor diesel': 'motor_diesel', 'diesel': 'motor_diesel',
+        'talachero': 'talachera', 'vulcanizadora': 'talachera', 'desponchadora': 'talachera',
+        'llantera': 'llantas', 'llanta': 'llantas',
+        'grua': 'gruas',
+        'refacciones': 'refaccionaria', 'refaccion': 'refaccionaria', 'refaci': 'refaccionaria',
+        'muelle': 'muelles',
+        'carrocerias': 'carroceria',
+        'muelles y carrocerias': 'muelles_carroceria', 'carroceria y muelles': 'muelles_carroceria',
+    }
+
+    @classmethod
+    def normalizar_categoria(cls, texto):
+        """Convierte lo que venga en el Excel ('MECANICA GENERAL', 'Talachera', 'REFACI'…)
+        al valor interno ('mecanica', 'talachera', 'refaccionaria'). Devuelve None si no se reconoce."""
+        import unicodedata
+        if texto is None:
+            return None
+        t = unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode()
+        t = ' '.join(t.lower().replace('_', ' ').split())
+        if not t:
+            return None
+        for valor, etiqueta in cls.CATEGORIA_CHOICES:
+            etiq = unicodedata.normalize('NFKD', etiqueta).encode('ascii', 'ignore').decode().lower()
+            if t == valor.replace('_', ' ') or t == etiq:
+                return valor
+        return cls.CATEGORIA_ALIAS.get(t)
     nombre      = models.CharField(max_length=200)
     categoria   = models.CharField(max_length=50, choices=CATEGORIA_CHOICES)
     descripcion = models.TextField(blank=True)
