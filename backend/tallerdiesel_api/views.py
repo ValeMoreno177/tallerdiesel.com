@@ -1790,7 +1790,7 @@ class TecnicoViewSet(viewsets.ModelViewSet):
         ws.append(['Juan Pérez', 'motor_diesel', 'Monterrey', 'Nuevo León', 'Av. Constitución 100',
                    '8121234567', 25.6866, -100.3161, 'Ejemplo de descripción', 'si'])
         ws2 = wb.create_sheet('Categorías válidas')
-        ws2.append(['valor (usar este texto en la columna "categoria")', 'significa'])
+        ws2.append(['valor (puedes escribir este o el de "significa")', 'significa'])
         for val, label in Tecnico.CATEGORIA_CHOICES:
             ws2.append([val, label])
         for col in ws.columns:
@@ -1838,9 +1838,10 @@ class TecnicoViewSet(viewsets.ModelViewSet):
                     if not nombre or not categoria or not ciudad or not estado or not telefono or latitud is None or longitud is None:
                         errores.append(f'Fila {i}: faltan datos obligatorios (nombre, categoria, ciudad, estado, telefono, latitud, longitud).')
                         continue
-                    categoria = str(categoria).strip()
+                    categoria_txt = str(categoria).strip()
+                    categoria = Tecnico.normalizar_categoria(categoria_txt)
                     if categoria not in categorias_validas:
-                        errores.append(f'Fila {i}: categoría "{categoria}" no es válida. Usa una de: {", ".join(categorias_validas.keys())}.')
+                        errores.append(f'Fila {i}: categoría "{categoria_txt}" no es válida. Usa una de: {", ".join(categorias_validas.values())}.')
                         continue
                     disp_txt = str(disponible).strip().lower() if disponible is not None else 'si'
                     disponible_bool = disp_txt not in ('no', 'false', '0', 'ocupado')
