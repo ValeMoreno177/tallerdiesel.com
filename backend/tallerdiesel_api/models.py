@@ -416,7 +416,7 @@ class Tecnico(models.Model):
     ciudad      = models.CharField(max_length=100)
     estado      = models.CharField(max_length=100)
     direccion   = models.CharField(max_length=300, blank=True)
-    telefono    = models.CharField(max_length=20)
+    telefono    = models.CharField(max_length=100)  # puede traer varios números o extensiones
     latitud     = models.FloatField()
     longitud    = models.FloatField()
     calificacion= models.FloatField(default=5.0)
