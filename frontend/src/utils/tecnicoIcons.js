@@ -11,6 +11,13 @@ export const CATEGORIA_ICONO = {
   aire:              '💨',
   mecanica:          '🔩',
   soldadura:         '🔥',
+  talachera:         '🛞',
+  llantas:           '⭕',
+  gruas:             '🪝',
+  refaccionaria:     '📦',
+  muelles:           '〰️',
+  carroceria:        '🛻',
+  muelles_carroceria:'🚛',
 }
 
 export const CATEGORIA_COLOR = {
@@ -22,6 +29,13 @@ export const CATEGORIA_COLOR = {
   aire:              '#7c3aed', // morado
   mecanica:          '#059669', // verde
   soldadura:         '#db2777', // rosa
+  talachera:         '#475569', // gris pizarra
+  llantas:           '#111827', // negro
+  gruas:             '#b45309', // café/ámbar
+  refaccionaria:     '#4f46e5', // índigo
+  muelles:           '#65a30d', // verde limón
+  carroceria:        '#be123c', // vino
+  muelles_carroceria:'#0f766e', // verde azulado
 }
 
 export const CATEGORIA_LEYENDA = [
@@ -33,6 +47,13 @@ export const CATEGORIA_LEYENDA = [
   { value: 'aire',              label: 'Sistema de aire' },
   { value: 'mecanica',          label: 'Mecánica general' },
   { value: 'soldadura',         label: 'Soldadura' },
+  { value: 'talachera',         label: 'Talachera' },
+  { value: 'llantas',           label: 'Llantas' },
+  { value: 'gruas',             label: 'Grúas' },
+  { value: 'refaccionaria',     label: 'Refaccionaria' },
+  { value: 'muelles',           label: 'Muelles' },
+  { value: 'carroceria',        label: 'Carrocería' },
+  { value: 'muelles_carroceria',label: 'Muelles y carrocería' },
 ]
 
 const ICONO_DEFAULT = '🔨'
