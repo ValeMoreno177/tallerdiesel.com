@@ -21,17 +21,8 @@ import useAutoRefresh from '../hooks/useAutoRefresh'
 // axios público sin interceptor de auth — para endpoints públicos como /tecnicos/
 const publicApi = axios.create({ baseURL: API_BASE_URL });
 
-const CATEGORIAS = [
-  { value: "", label: "Categoría" },
-  { value: "motor_diesel", label: "Motor diesel" },
-  { value: "electrico", label: "Eléctrico" },
-  { value: "frenos_suspension", label: "Frenos y suspensión" },
-  { value: "transmision", label: "Transmisión" },
-  { value: "hidraulico", label: "Sistema hidráulico" },
-  { value: "aire", label: "Sistema de aire" },
-  { value: "mecanica", label: "Mecánica general" },
-  { value: "soldadura", label: "Soldadura" },
-];
+// Misma lista que el mapa (utils/tecnicoIcons) para no tener que actualizarla en dos lugares.
+const CATEGORIAS = [{ value: "", label: "Categoría" }, ...CATEGORIA_LEYENDA];
 
 export default function MapaTecnicosPage() {
   const { user } = useAuth();
