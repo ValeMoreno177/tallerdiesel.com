@@ -1749,6 +1749,35 @@ class TicketViewSet(viewsets.ModelViewSet):
 
 # ── Técnicos ──────────────────────────────────────────────────────────────────
 
+def _coordenada_excel(valor):
+    """Lee latitud/longitud del Excel aunque venga como texto: '19,3277', '19.327.766' (puntos de miles
+    por error → 19.327766). Devuelve None si no se puede leer."""
+    if valor is None or valor == '':
+        return None
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    t = str(valor).strip().replace(' ', '').replace(',', '.')
+    negativo = t.startswith('-')
+    t = t.lstrip('+-')
+    if t.count('.') > 1:
+        entero, _, resto = t.partition('.')
+        t = entero + '.' + resto.replace('.', '')
+    try:
+        n = float(t)
+    except ValueError:
+        return None
+    return -n if negativo else n
+
+
+def _telefono_excel(valor):
+    """Teléfono como texto. Si Excel lo guardó como número (8711234567.0) quita el '.0'."""
+    if valor is None:
+        return ''
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    return str(valor).strip()
+
+
 class TecnicoViewSet(viewsets.ModelViewSet):
     queryset = _con_resumen_calificaciones(Tecnico.objects.filter(activo=True))
     serializer_class = TecnicoSerializer
@@ -1843,6 +1872,18 @@ class TecnicoViewSet(viewsets.ModelViewSet):
                     if categoria not in categorias_validas:
                         errores.append(f'Fila {i}: categoría "{categoria_txt}" no es válida. Usa una de: {", ".join(categorias_validas.values())}.')
                         continue
+                    lat, lng = _coordenada_excel(latitud), _coordenada_excel(longitud)
+                    if lat is None or lng is None or not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+                        errores.append(f'Fila {i}: latitud/longitud no válidas ("{latitud}", "{longitud}"). '
+                                       f'Usa números como 19.32776 y -97.15940.')
+                        continue
+                    telefono_txt = _telefono_excel(telefono)
+                    largos = [('nombre', nombre, 200), ('ciudad', ciudad, 100), ('estado', estado, 100),
+                              ('direccion', direccion, 300), ('telefono', telefono_txt, 100)]
+                    muy_largo = next((n for n, v, m in largos if v and len(str(v).strip()) > m), None)
+                    if muy_largo:
+                        errores.append(f'Fila {i}: la columna "{muy_largo}" es demasiado larga.')
+                        continue
                     disp_txt = str(disponible).strip().lower() if disponible is not None else 'si'
                     disponible_bool = disp_txt not in ('no', 'false', '0', 'ocupado')
                     tecnico, _ = Tecnico.objects.update_or_create(
@@ -1852,9 +1893,9 @@ class TecnicoViewSet(viewsets.ModelViewSet):
                             ciudad=str(ciudad).strip(),
                             estado=str(estado).strip(),
                             direccion=str(direccion).strip() if direccion else '',
-                            telefono=str(telefono).strip(),
-                            latitud=float(latitud),
-                            longitud=float(longitud),
+                            telefono=telefono_txt,
+                            latitud=lat,
+                            longitud=lng,
                             descripcion=str(descripcion).strip() if descripcion else '',
                             disponible=disponible_bool,
                             activo=True,
