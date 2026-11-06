@@ -22,7 +22,8 @@ export default function ConfiguracionPage() {
     e.preventDefault()
     setGuardando(true); setMensaje(''); setError('')
     try {
-      const { data } = await api.put('/empresa-config/', form)
+      const { coordinadores, ...datos } = form
+      const { data } = await api.put('/empresa-config/', datos)
       setForm(data)
       setMensaje('Información de la empresa actualizada correctamente.')
     } catch (err) {
@@ -109,6 +110,26 @@ export default function ConfiguracionPage() {
                   <label className="form-label">Sitio web</label>
                   <input className="form-input" name="sitio_web" value={form.sitio_web || ''} onChange={handleChange} />
                 </div>
+
+                {Array.isArray(form.coordinadores) && (
+                  <div className="form-group" style={{ borderTop: '1px solid #e5e7eb', paddingTop: '0.9rem' }}>
+                    <label className="form-label">¿A quién le llegan los servicios nuevos?</label>
+                    <select className="form-input" name="coordinador_fijo"
+                            value={form.coordinador_fijo ?? ''}
+                            onChange={e => setForm({ ...form, coordinador_fijo: e.target.value ? Number(e.target.value) : null })}>
+                      <option value="">Repartir entre todos los coordinadores (por turno)</option>
+                      {form.coordinadores.map(c => (
+                        <option key={c.id} value={c.id}>
+                          Todos a {c.numero ? `Coordinador ${c.numero} — ` : ''}{c.nombre}
+                        </option>
+                      ))}
+                    </select>
+                    <small style={{ color: '#6b7280', fontSize: '0.8rem' }}>
+                      Si eliges un coordinador, todos los servicios nuevos y los que estén en espera le llegan directo a él.
+                      Los demás coordinadores solo verán los tickets que ya tenían.
+                    </small>
+                  </div>
+                )}
 
                 <button className="btn btn-primary" type="submit" disabled={guardando} style={{ alignSelf: 'flex-start' }}>
                   {guardando ? 'Guardando...' : 'Guardar cambios'}
