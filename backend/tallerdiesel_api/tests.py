@@ -1480,3 +1480,58 @@ class ReiniciarTicketsTests(APITestCase):
         self.assertEqual(Notificacion.objects.count(), 1)
         self.assertTrue(User.objects.filter(username='clir').exists())
         self.assertEqual(Ticket.objects.create(coordinador=coord, cliente=cli, empresa='E', unidad='U1', fecha=date.today()).ticket_id, 'TD001')
+
+
+class ImportarCategoriasNuevasTests(APITestCase):
+    """El Excel acepta las categorías nuevas escritas como las capturan (mayúsculas, sin acentos, abreviadas)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user('adm', 'adm@x.com', 'pass12345', rol='admin', nombre='adm',
+                                              email_verificado=True)
+
+    def _excel(self, filas):
+        import io
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(['nombre', 'categoria', 'ciudad', 'estado', 'direccion', 'telefono',
+                   'latitud', 'longitud', 'descripcion', 'disponible'])
+        for f in filas:
+            ws.append(f)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        buf.name = 'tecnicos.xlsx'
+        return buf
+
+    def test_normaliza_categorias(self):
+        casos = {
+            'MECANICA GENERAL': 'mecanica', 'TALACHERA': 'talachera', 'Talachera': 'talachera',
+            'GRUAS': 'gruas', 'Grúas': 'gruas', 'REFACCIONARIA': 'refaccionaria', 'REFACI': 'refaccionaria',
+            'REFACCIONES': 'refaccionaria', 'MUELLES': 'muelles', 'CARROCERIA': 'carroceria',
+            'MUELLES Y CARROCERIA': 'muelles_carroceria', 'LLANTAS': 'llantas',
+            'motor_diesel': 'motor_diesel', 'Frenos y suspensión': 'frenos_suspension',
+            'cualquier cosa': None, '': None,
+        }
+        for texto, esperado in casos.items():
+            self.assertEqual(Tecnico.normalizar_categoria(texto), esperado, texto)
+
+    def test_importa_categorias_nuevas(self):
+        filas = [
+            ['T1', 'TALACHERA', 'Torreón', 'Coahuila', '', '871', 25.5, -103.4, '', ''],
+            ['T2', 'GRUAS', 'Durango', 'Durango', '', '618', 24.0, -104.6, '', ''],
+            ['T3', 'MUELLES Y CARROCERIA', 'Saltillo', 'Coahuila', '', '844', 25.4, -100.9, '', ''],
+            ['T4', 'REFACI', 'Saltillo', 'Coahuila', '', '844', 25.4, -100.9, '', ''],
+            ['T5', 'INVENTADA', 'Saltillo', 'Coahuila', '', '844', 25.4, -100.9, '', ''],
+        ]
+        self.client.force_authenticate(self.admin)
+        r = self.client.post('/api/tecnicos/importar_excel/', {'archivo': self._excel(filas)}, format='multipart')
+        self.assertIn(r.status_code, (200, 201), r.data)
+        self.assertEqual(r.data['importados'], 4)
+        self.assertEqual(len(r.data['errores']), 1)
+        self.assertIn('INVENTADA', r.data['errores'][0])
+        cats = dict(Tecnico.objects.values_list('nombre', 'categoria'))
+        self.assertEqual(cats['T1'], 'talachera')
+        self.assertEqual(cats['T2'], 'gruas')
+        self.assertEqual(cats['T3'], 'muelles_carroceria')
+        self.assertEqual(cats['T4'], 'refaccionaria')
