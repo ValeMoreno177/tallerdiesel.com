@@ -24,9 +24,10 @@ class UsuarioManager(BaseUserManager):
 class Usuario(AbstractBaseUser, PermissionsMixin):
     ROL_CHOICES = [('admin','Administrador'),('coordinador','Coordinador'),('cliente','Cliente')]
     username        = models.CharField(max_length=150, unique=True)
-    # El correo es único, EXCEPTO entre coordinadores: el Administrador puede dar de alta varios
-    # coordinadores con el mismo correo (p. ej. un buzón de coordinación). Eso lo valida
-    # UsuarioSerializer; aquí la base de datos lo refuerza para clientes y administradores.
+    # El correo es único entre las cuentas ACTIVAS, EXCEPTO entre coordinadores: el Administrador puede dar
+    # de alta varios coordinadores con el mismo correo (p. ej. un buzón de coordinación). Una cuenta
+    # desactivada libera su correo para usarlo en otra. Eso lo valida UsuarioSerializer; aquí la base de
+    # datos lo refuerza para clientes y administradores.
     email           = models.EmailField()
     nombre          = models.CharField(max_length=100, blank=True)
     apellido_paterno= models.CharField(max_length=100, blank=True)
@@ -60,9 +61,10 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         verbose_name = 'Usuario'
         verbose_name_plural = 'Usuarios'
         constraints = [
+            # Solo entre cuentas ACTIVAS: al desactivar una cuenta, su correo queda libre para otra.
             models.UniqueConstraint(
-                fields=['email'], condition=~models.Q(rol='coordinador'),
-                name='usuario_email_unico_salvo_coordinador'),
+                fields=['email'], condition=~models.Q(rol='coordinador') & models.Q(is_active=True),
+                name='usuario_email_unico_activo_salvo_coordinador'),
         ]
 
     def __str__(self):
@@ -408,105 +410,4 @@ class Tecnico(models.Model):
         t = unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode()
         t = ' '.join(t.lower().replace('_', ' ').split())
         if not t:
-            return None
-        for valor, etiqueta in cls.CATEGORIA_CHOICES:
-            etiq = unicodedata.normalize('NFKD', etiqueta).encode('ascii', 'ignore').decode().lower()
-            if t == valor.replace('_', ' ') or t == etiq:
-                return valor
-        return cls.CATEGORIA_ALIAS.get(t)
-    nombre      = models.CharField(max_length=200)
-    categoria   = models.CharField(max_length=50, choices=CATEGORIA_CHOICES)
-    descripcion = models.TextField(blank=True)
-    ciudad      = models.CharField(max_length=100)
-    estado      = models.CharField(max_length=100)
-    direccion   = models.CharField(max_length=300, blank=True)
-    telefono    = models.CharField(max_length=100)  # puede traer varios números o extensiones
-    latitud     = models.FloatField()
-    longitud    = models.FloatField()
-    calificacion= models.FloatField(default=5.0)
-    activo      = models.BooleanField(default=True)
-    disponible  = models.BooleanField(default=True)  # True=disponible, False=ocupado
-
-    def __str__(self):
-        return f'{self.nombre} - {self.get_categoria_display()}'
-
-
-class Opinion(models.Model):
-    """Calificación del técnico asociada a un servicio. El comentario es opcional.
-    `calificacion_servicio` se conserva para compatibilidad con opiniones históricas."""
-    tecnico      = models.ForeignKey(Tecnico, on_delete=models.CASCADE, related_name='opiniones',
-                                     null=True, blank=True)
-    ticket       = models.ForeignKey('Ticket', on_delete=models.SET_NULL, null=True, blank=True, related_name='opinion')
-    nombre_autor = models.CharField(max_length=100)
-    calificacion = models.IntegerField(null=True, blank=True)
-    calificacion_servicio = models.PositiveSmallIntegerField(null=True, blank=True)
-    comentario   = models.TextField(blank=True)
-    fecha        = models.DateTimeField(auto_now_add=True)
-    # Respuesta del taller a la reseña (como el desarrollador en Play Store)
-    respuesta        = models.TextField(blank=True)
-    respuesta_fecha  = models.DateTimeField(null=True, blank=True)
-    respondido_por   = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
-
-
-class UnidadFlotilla(models.Model):
-    """Catálogo reutilizable de unidades por cliente/empresa, para no capturar
-    tipo de unidad y número cada vez que se solicita un servicio."""
-    propietario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='unidades_flotilla')
-    tipo_unidad = models.CharField(max_length=200, blank=True)
-    unidad      = models.CharField(max_length=200)
-    activo      = models.BooleanField(default=True)
-    creado_en   = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['unidad']
-
-    def __str__(self):
-        return f'{self.unidad} ({self.tipo_unidad})' if self.tipo_unidad else self.unidad
-
-
-class SolicitudServicio(models.Model):
-    nombre_completo = models.CharField(max_length=200)
-    telefono        = models.CharField(max_length=20)
-    empresa         = models.CharField(max_length=200, blank=True)
-    lugar           = models.CharField(max_length=200, blank=True)   # Ubicación del cliente
-    tipo_unidad     = models.CharField(max_length=200, blank=True)   # Tipo de unidad (ej. Tractocamión, Caja seca...)
-    unidad          = models.CharField(max_length=200, blank=True)   # Datos / número de unidad
-    problema        = models.TextField()
-    fecha           = models.DateTimeField(auto_now_add=True)
-    atendida        = models.BooleanField(default=False)
-    cliente         = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True)
-    ticket          = models.OneToOneField(Ticket, on_delete=models.SET_NULL, null=True, blank=True,
-                          related_name='solicitud_origen')
-
-    class Meta:
-        ordering = ['-fecha']
-
-
-class Notificacion(models.Model):
-    destinatario  = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='notificaciones')
-    titulo        = models.CharField(max_length=200)
-    mensaje       = models.TextField()
-    leida         = models.BooleanField(default=False)
-    tipo          = models.CharField(max_length=50, default='solicitud')
-    referencia_id = models.IntegerField(null=True, blank=True)
-    archivada      = models.BooleanField(default=False)
-    fecha         = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['-fecha']
-
-# ─── Permiso de edición de ticket cerrado otorgado por el Admin al Coordinador ───
-# Se guarda en el Ticket mismo para granularidad por ticket
-# Se añade un campo en Ticket
-
-
-class ArchivoAlmacenado(models.Model):
-    """Archivo guardado en la base de datos (ver storage.AlmacenamientoBD). Sirve para que las
-    evidencias no se pierdan en la nube cuando no hay un bucket S3/R2 configurado."""
-    nombre    = models.CharField(max_length=500, unique=True)
-    contenido = models.BinaryField()
-    tamano    = models.PositiveIntegerField(default=0)
-    creado    = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return self.nombre
+       
