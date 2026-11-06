@@ -352,4 +352,60 @@ export default function UsuariosPage() {
               <table>
                 <thead><tr><th>Usuario</th><th>Nombre completo</th><th>Correo</th><th>Rol</th><th>Empresa</th><th>Estatus</th><th>Acciones</th></tr></thead>
                 <tbody>
-      
+                  {filtrados.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af' }}>No hay usuarios</td></tr>}
+                  {filtrados.map(u => (
+                    <tr key={u.id}>
+                      <td style={{ fontWeight: 600 }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <Avatar usuario={u} size={28} />{u.username}
+                        </span>
+                      </td>
+                      <td>{u.nombre_completo || '—'}</td>
+                      <td>{u.email}</td>
+                      <td>
+                        <span className={`badge badge-${u.rol}`}>{u.rol.charAt(0).toUpperCase() + u.rol.slice(1)}</span>
+                        {u.rol === 'coordinador' && u.numero_coordinador != null && (
+                          <span title="Número de coordinador (orden de reparto de tickets)" style={{ marginLeft: 6, fontWeight: 600, color: '#1e40af' }}>#{u.numero_coordinador}</span>
+                        )}
+                        {u.rol === 'coordinador' && u.puede_editar_sistema && (
+                          <span title="Puede editar información del sistema" style={{ marginLeft: 6 }}>🔑</span>
+                        )}
+                      </td>
+                      <td>{u.empresa || '—'}</td>
+                      <td><span className={`badge badge-${u.is_active ? 'activo' : 'inactivo'}`}>{u.is_active ? 'Activo' : 'Inactivo'}</span></td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {(viewerEsAdmin || u.rol !== 'admin') && (
+                            <>
+                              <button className="btn btn-sm btn-ghost" onClick={() => { setSelected(u); setModal('editar') }}>✏️</button>
+                              <button className="btn btn-sm btn-ghost" style={{ color: u.is_active ? '#dc2626' : '#059669' }}
+                                onClick={() => { setSelected(u); setModal('toggle') }}>🔒</button>
+                              {u.id !== viewer?.id && (viewerEsAdmin ? u.rol !== 'admin' : u.rol === 'cliente') && (
+                                <button className="btn btn-sm btn-ghost" title="Restablecer contraseña (si la olvidó)"
+                                  onClick={() => { setSelected(u); setModal('password') }}>🔑</button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {(modal === 'nuevo' || modal === 'editar') && (
+          <ModalUsuario usuario={modal === 'editar' ? selected : null} onClose={() => setModal(null)} onSaved={fetchUsers} viewerEsAdmin={viewerEsAdmin} />
+        )}
+        {modal === 'password' && selected && (
+          <ModalRestablecer usuario={selected} onClose={() => setModal(null)} />
+        )}
+        {modal === 'toggle' && selected && (
+          <ModalDesactivar usuario={selected} onClose={() => setModal(null)} onSaved={fetchUsers} />
+        )}
+      </main>
+    </div>
+  )
+}
