@@ -26,7 +26,8 @@ from .models import (Ticket, Tecnico, Opinion, Operador, SolicitudServicio,
                      Notificacion, ComentarioTicket, TokenVerificacion, ConfiguracionEmpresa,
                      CodigoRecuperacion, UnidadFlotilla, EvidenciaTicket, FotoPerfil)
 from .servicios import (puede_gestionar_ticket, reclamar_ticket, asignar_siguiente_en_espera,
-                        asignar_coordinador_automatico, distancia_km, coordenada_valida)
+                        asignar_coordinador_automatico, distancia_km, coordenada_valida,
+                        asignar_en_espera_al_fijo, coordinador_fijo_vigente)
 from .emails import email_credenciales, enviar_html, email_nueva_solicitud, email_confirmacion_cliente, email_codigo_verificacion, email_nuevo_comentario, email_tecnico_asignado
 from .serializers import (
     UsuarioSerializer, RegistroSerializer, TicketSerializer,
@@ -2289,17 +2290,35 @@ def marcar_todas_leidas(request):
 @permission_classes([IsAuthenticated])
 def empresa_config(request):
     config = ConfiguracionEmpresa.obtener()
+
+    def _respuesta(cfg):
+        data = dict(ConfiguracionEmpresaSerializer(cfg).data)
+        if request.user.rol == 'admin':   # la lista de coordinadores solo la ve el Administrador
+            data['coordinadores'] = [
+                {'id': c.id, 'nombre': c.nombre_completo, 'numero': c.numero_coordinador}
+                for c in User.objects.filter(rol='coordinador', is_active=True).order_by('numero_coordinador', 'id')
+            ]
+        else:
+            data.pop('coordinador_fijo', None)
+        return data
+
     if request.method == 'GET':
-        return Response(ConfiguracionEmpresaSerializer(config).data)
+        return Response(_respuesta(config))
 
     if request.user.rol != 'admin':
         return Response({'error': 'Solo el Administrador puede editar la información de la empresa.'}, status=403)
 
     partial = request.method == 'PATCH'
-    serializer = ConfiguracionEmpresaSerializer(config, data=request.data, partial=partial)
+    fijo_anterior = config.coordinador_fijo_id
+    datos = {k: v for k, v in request.data.items() if k != 'coordinadores'}
+    if datos.get('coordinador_fijo') == '':
+        datos['coordinador_fijo'] = None
+    serializer = ConfiguracionEmpresaSerializer(config, data=datos, partial=partial)
     if serializer.is_valid():
-        serializer.save(actualizado_por=request.user)
-        return Response(serializer.data)
+        cfg = serializer.save(actualizado_por=request.user)
+        if cfg.coordinador_fijo_id and cfg.coordinador_fijo_id != fijo_anterior:
+            asignar_en_espera_al_fijo()
+        return Response(_respuesta(cfg))
     return Response(serializer.errors, status=400)
 
 
@@ -2387,7 +2406,9 @@ def coordinador_nueva_solicitud(request):
             tipo_unidad=solicitud.tipo_unidad, unidad=solicitud.unidad or '—', lugar=solicitud.lugar,
             operador=(servicio.get('operador') or '').strip() or cliente.nombre_completo,
             reparacion=problema, cliente=cliente, tipo_solicitud='coordinador',
-            coordinador=request.user if request.user.rol == 'coordinador' else None,
+            # Si el Administrador fijó un coordinador para todos los servicios, le llega a él aunque lo registre otro.
+            coordinador=(request.user if request.user.rol == 'coordinador' and not coordinador_fijo_vigente()
+                         else None),
         )
         solicitud.ticket = ticket
         solicitud.save(update_fields=['ticket'])
